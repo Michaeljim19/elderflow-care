@@ -49,6 +49,25 @@ export const getMedicationsByPatient = async (patientId: string): Promise<Medica
   }
 };
 
+// Get single medication
+export const getMedication = async (medicationId: string): Promise<Medication | null> => {
+  try {
+    const docRef = doc(db, COLLECTIONS.MEDICATIONS, medicationId);
+    const docSnap = await getDoc(docRef);
+    
+    if (docSnap.exists()) {
+      return {
+        medication_id: docSnap.id,
+        ...docSnap.data()
+      } as Medication;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error fetching medication:', error);
+    throw error;
+  }
+};
+
 // Add new medication
 export const addMedication = async (medication: Omit<Medication, 'medication_id'>): Promise<string> => {
   try {

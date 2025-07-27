@@ -8,11 +8,34 @@ import {
   deleteDoc, 
   query, 
   where, 
-  orderBy 
+  orderBy,
+  Timestamp 
 } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase';
 import { COLLECTIONS } from './collections';
-import { Caregiver } from '@/types';
+import { Caregiver, ShiftType, CaregiverRole } from '@/types';
+
+// Firebase caregiver data type - matches your Firebase structure
+type FirebaseCaregiver = {
+  first_name: string;
+  middle_name?: string;
+  last_name: string;
+  birthday?: string;
+  email: string;
+  contact_number: number;
+  address?: {
+    province: string;
+    city_municipality: string;
+    barangay: string;
+    street: string;
+  };
+  shift_type: ShiftType;
+  shift_start_date?: Timestamp;
+  shift_end_date?: Timestamp;
+  role: CaregiverRole;
+  created_at?: Timestamp;
+  updated_at?: Timestamp;
+};
 
 // Get all caregivers
 export const getCaregivers = async (): Promise<Caregiver[]> => {
@@ -50,13 +73,26 @@ export const getCaregiver = async (caregiverId: string): Promise<Caregiver | nul
 };
 
 // Add new caregiver
-export const addCaregiver = async (caregiver: Omit<Caregiver, 'caregiver_id'>): Promise<string> => {
+export const addCaregiver = async (caregiver: FirebaseCaregiver): Promise<string> => {
   try {
-    const docRef = await addDoc(collection(db, COLLECTIONS.CAREGIVERS), {
+    // Check if user is authenticated
+    const currentUser = auth.currentUser;
+    console.log('Current user:', currentUser);
+    console.log('Attempting to add caregiver:', caregiver);
+    
+    if (!currentUser) {
+      throw new Error('User not authenticated');
+    }
+
+    // Add timestamps
+    const caregiverWithTimestamps = {
       ...caregiver,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    });
+      created_at: Timestamp.now(),
+      updated_at: Timestamp.now()
+    };
+
+    const docRef = await addDoc(collection(db, COLLECTIONS.CAREGIVERS), caregiverWithTimestamps);
+    console.log('Successfully added caregiver with ID:', docRef.id);
     return docRef.id;
   } catch (error) {
     console.error('Error adding caregiver:', error);
@@ -65,13 +101,10 @@ export const addCaregiver = async (caregiver: Omit<Caregiver, 'caregiver_id'>): 
 };
 
 // Update caregiver
-export const updateCaregiver = async (caregiverId: string, updates: Partial<Omit<Caregiver, 'caregiver_id'>>): Promise<void> => {
+export const updateCaregiver = async (caregiverId: string, updates: Partial<FirebaseCaregiver>): Promise<void> => {
   try {
     const docRef = doc(db, COLLECTIONS.CAREGIVERS, caregiverId);
-    await updateDoc(docRef, {
-      ...updates,
-      updated_at: new Date().toISOString()
-    });
+    await updateDoc(docRef, updates);
   } catch (error) {
     console.error('Error updating caregiver:', error);
     throw error;
@@ -85,25 +118,6 @@ export const deleteCaregiver = async (caregiverId: string): Promise<void> => {
     await deleteDoc(docRef);
   } catch (error) {
     console.error('Error deleting caregiver:', error);
-    throw error;
-  }
-};
-
-// Get active caregivers
-export const getActiveCaregivers = async (): Promise<Caregiver[]> => {
-  try {
-    const q = query(
-      collection(db, COLLECTIONS.CAREGIVERS),
-      where('status', '==', 'Active'),
-      orderBy('first_name')
-    );
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      caregiver_id: doc.id,
-      ...doc.data()
-    })) as Caregiver[];
-  } catch (error) {
-    console.error('Error fetching active caregivers:', error);
     throw error;
   }
 };

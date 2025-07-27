@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow authenticated users to read and write to patients collection
+    match /patients/{patientId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Allow authenticated users to read and write to caregivers collection
+    match /caregivers/{caregiverId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Allow authenticated users to read and write to medications collection
+    match /medications/{medicationId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Allow authenticated users to read and write to appointments collection
+    match /appointments/{appointmentId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Allow authenticated users to read and write to medical_records collection
+    match /medical_records/{recordId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Allow authenticated users to read and write to vitals collection
+    match /vitals/{vitalId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
