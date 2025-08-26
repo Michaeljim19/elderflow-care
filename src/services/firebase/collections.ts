@@ -5,7 +5,10 @@ export const COLLECTIONS = {
   MEDICAL_HISTORY: 'medical_history',
   CAREGIVERS: 'caregivers',
   CAREGIVER_SHIFTS: 'caregiver_shifts',
-  REMINDER_LOGS: 'reminder_logs'
+  REMINDER_LOGS: 'reminder_logs',
+  HANDOVER_REPORTS: 'handover_reports',
+  ACCOUNTS: 'accounts',
+  USERS: 'users'
 } as const;
 
 // Collection references for type safety

@@ -17,13 +17,14 @@ import { Medication } from '@/types';
 // Get all medications
 export const getMedications = async (): Promise<Medication[]> => {
   try {
-    const querySnapshot = await getDocs(
-      query(collection(db, COLLECTIONS.MEDICATIONS), orderBy('medication_name'))
-    );
-    return querySnapshot.docs.map(doc => ({
+    const querySnapshot = await getDocs(collection(db, COLLECTIONS.MEDICATIONS));
+    const results = querySnapshot.docs.map(doc => ({
       medication_id: doc.id,
       ...doc.data()
     })) as Medication[];
+    
+    // Sort by medication_name in memory instead of using Firestore orderBy
+    return results.sort((a, b) => a.medication_name.localeCompare(b.medication_name));
   } catch (error) {
     console.error('Error fetching medications:', error);
     throw error;
@@ -35,14 +36,16 @@ export const getMedicationsByPatient = async (patientId: string): Promise<Medica
   try {
     const q = query(
       collection(db, COLLECTIONS.MEDICATIONS),
-      where('patient_id', '==', patientId),
-      orderBy('medication_name')
+      where('patient_id', '==', patientId)
     );
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
+    const results = querySnapshot.docs.map(doc => ({
       medication_id: doc.id,
       ...doc.data()
     })) as Medication[];
+    
+    // Sort by medication_name in memory instead of using Firestore orderBy
+    return results.sort((a, b) => a.medication_name.localeCompare(b.medication_name));
   } catch (error) {
     console.error('Error fetching medications by patient:', error);
     throw error;

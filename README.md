@@ -59,6 +59,36 @@ This project is built with:
 - React
 - shadcn-ui
 - Tailwind CSS
+- Firebase (Authentication & Database)
+- EmailJS (Email notifications)
+
+## EmailJS Setup
+
+The application uses EmailJS for sending account creation emails. To enable email functionality:
+
+1. **Create EmailJS Account**: Visit [EmailJS.com](https://www.emailjs.com/) and create an account
+2. **Create Email Service**: Set up an email service (Gmail, Outlook, etc.) with service ID: `service_elderflow`
+3. **Create Email Templates**: 
+   - Create template with ID: `template_account_creation` for account creation emails
+   - Create template with ID: `template_password_reset` for password reset emails
+   - Create template with ID: `template_account_status` for account status updates
+
+### Account Creation Email Template Variables:
+```
+{{to_email}} - Recipient email
+{{to_name}} - Recipient name
+{{account_type}} - Account type (Caregiver/Patient Guardian)
+{{temporary_password}} - Generated password
+{{login_url}} - Application login URL
+{{admin_notes}} - Admin notes/welcome message
+{{system_name}} - System name
+{{support_email}} - Support email
+{{created_date}} - Account creation date
+```
+
+4. **Update Configuration**: The EmailJS public key is already configured. Update service and template IDs in `src/services/emailjs.ts` if needed.
+
+**Note**: The application includes fallback error handling that logs account details to console if email sending fails.
 
 ## How can I deploy this project?
 

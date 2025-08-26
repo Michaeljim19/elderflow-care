@@ -33,7 +33,8 @@ import {
 } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { Patient, Caregiver } from "@/types"
-import { getPatients, addPatient, getCaregivers } from "@/services/firebase"
+import { getPatients, addPatient } from "@/services/firebase/patients"
+import { getCaregivers } from "@/services/firebase/caregivers"
 import { seedDatabase } from "@/services/firebase/seedData"
 
 const Patients = () => {
@@ -50,7 +51,7 @@ const Patients = () => {
     first_name: "",
     last_name: "",
     birthdate: "",
-    gender: "" as "Male" | "Female" | "Other" | "",
+    gender: undefined as "Male" | "Female" | "Other" | undefined,
     contact_number: "",
     address: "",
     assigned_caregiver_id: ""
@@ -147,7 +148,7 @@ const Patients = () => {
         first_name: "",
         last_name: "",
         birthdate: "",
-        gender: "",
+        gender: undefined,
         contact_number: "",
         address: "",
         assigned_caregiver_id: ""
@@ -275,7 +276,7 @@ const Patients = () => {
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="gender">Gender *</Label>
-                    <Select value={formData.gender} onValueChange={(value) => handleInputChange("gender", value)}>
+                    <Select value={formData.gender || ""} onValueChange={(value) => handleInputChange("gender", value as "Male" | "Female" | "Other")}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select gender" />
                       </SelectTrigger>
@@ -307,13 +308,13 @@ const Patients = () => {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="caregiver">Assigned Caregiver</Label>
-                  <Select value={formData.assigned_caregiver_id} onValueChange={(value) => handleInputChange("assigned_caregiver_id", value)}>
+                  <Select value={formData.assigned_caregiver_id || "unassigned"} onValueChange={(value) => handleInputChange("assigned_caregiver_id", value === "unassigned" ? "" : value)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select caregiver" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">No caregiver assigned</SelectItem>
-                      {caregivers.map((caregiver) => (
+                      <SelectItem value="unassigned">No caregiver assigned</SelectItem>
+                      {caregivers.filter(caregiver => caregiver.caregiver_id && caregiver.caregiver_id.trim() !== '').map((caregiver) => (
                         <SelectItem key={caregiver.caregiver_id} value={caregiver.caregiver_id}>
                           {caregiver.first_name} {caregiver.last_name} - {caregiver.role}
                         </SelectItem>

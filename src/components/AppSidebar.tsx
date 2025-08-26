@@ -9,7 +9,9 @@ import {
   ChevronRight,
   Heart,
   LogOut,
-  User
+  User,
+  Settings,
+  Database
 } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
@@ -71,9 +73,27 @@ const navigationItems = [
   },
   { 
     title: "Schedules", 
-    url: "/schedules", 
+    url: "/schedule", 
     icon: Calendar,
     description: "Shift Planning"
+  },
+  { 
+    title: "Account Management", 
+    url: "/account", 
+    icon: Settings,
+    description: "User Account Creation"
+  },
+  { 
+    title: "Backup & Restore", 
+    url: "/backup-restore", 
+    icon: Database,
+    description: "Data Backup & Recovery"
+  },
+  { 
+    title: "Handover Reports", 
+    url: "/endorsements", 
+    icon: FileText,
+    description: "Shift Reports & Care Handovers"
   },
 ]
 
@@ -186,7 +206,6 @@ export function AppSidebar() {
                   className={`w-full ${collapsed ? 'px-2' : 'justify-start px-3'} h-12`}
                 >
                   <Avatar className="h-8 w-8">
-                    <AvatarImage src={userData.profileImage} />
                     <AvatarFallback className="bg-primary/10 text-primary">
                       {getInitials(userData.firstName, userData.lastName)}
                     </AvatarFallback>

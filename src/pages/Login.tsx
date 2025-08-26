@@ -2,15 +2,13 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { createTestAccount, loginWithTestAccount, TEST_ACCOUNT } from "@/lib/testAccount";
-import { seedDatabase } from "@/services/firebase/seedData";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Mail, Lock, Eye, EyeOff, UserPlus, LogIn, Database } from "lucide-react";
+import { Loader2, Mail, Lock, Eye, EyeOff } from "lucide-react";
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -20,81 +18,6 @@ const Login = () => {
   const [error, setError] = useState("");
   const navigate = useNavigate();
   const { toast } = useToast();
-
-  const handleCreateTestAccount = async () => {
-    setLoading(true);
-    setError("");
-    
-    try {
-      await createTestAccount();
-      
-      // Pre-fill the form with test account credentials
-      setEmail(TEST_ACCOUNT.email);
-      setPassword(TEST_ACCOUNT.password);
-      
-      toast({
-        title: "Test account created!",
-        description: "Login form has been pre-filled with test credentials.",
-      });
-    } catch (error: any) {
-      if (error.code === 'auth/email-already-in-use') {
-        // Account already exists, just pre-fill the form
-        setEmail(TEST_ACCOUNT.email);
-        setPassword(TEST_ACCOUNT.password);
-        
-        toast({
-          title: "Test account ready!",
-          description: "Login form has been pre-filled with existing test credentials.",
-        });
-      } else {
-        setError("Failed to create test account. Please try again.");
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickLogin = async () => {
-    setLoading(true);
-    setError("");
-    
-    try {
-      await loginWithTestAccount();
-      toast({
-        title: "Login successful",
-        description: "Welcome to ElderFlow Care!",
-      });
-      navigate("/");
-    } catch (error: any) {
-      console.error("Quick login error:", error);
-      if (error.code === 'auth/user-not-found') {
-        setError("Test account not found. Please create it first.");
-      } else {
-        setError("Quick login failed. Please try manual login.");
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSeedDatabase = async () => {
-    setLoading(true);
-    setError("");
-    
-    try {
-      await seedDatabase();
-      toast({
-        title: "Sample data created!",
-        description: "Database has been populated with sample patients, medications, and more.",
-        duration: 5000,
-      });
-    } catch (error: any) {
-      console.error("Seed database error:", error);
-      setError("Failed to seed database. Please check the console for details.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -162,8 +85,8 @@ const Login = () => {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Welcome Back</CardTitle>
-          <CardDescription className="text-center">
+          <CardTitle className="text-3xl font-bold text-center">Welcome Back</CardTitle>
+          <CardDescription className="text-lg text-center">
             Sign in to your ElderFlow Care account
           </CardDescription>
         </CardHeader>
@@ -176,32 +99,32 @@ const Login = () => {
           
           <form onSubmit={handleEmailLogin} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email" className="text-base">Email</Label>
               <div className="relative">
-                <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Mail className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
                 <Input
                   id="email"
                   type="email"
                   placeholder="Enter your email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="pl-10"
+                  className="pl-12 text-base h-12"
                   disabled={loading}
                 />
               </div>
             </div>
             
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password" className="text-base">Password</Label>
               <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Lock className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 pr-10"
+                  className="pl-12 pr-12 text-base h-12"
                   disabled={loading}
                 />
                 <Button
@@ -213,9 +136,9 @@ const Login = () => {
                   disabled={loading}
                 >
                   {showPassword ? (
-                    <EyeOff className="h-4 w-4" />
+                    <EyeOff className="h-5 w-5" />
                   ) : (
-                    <Eye className="h-4 w-4" />
+                    <Eye className="h-5 w-5" />
                   )}
                 </Button>
               </div>
@@ -223,16 +146,16 @@ const Login = () => {
             
             <Button
               type="submit"
-              className="w-full"
+              className="w-full h-12 text-base"
               disabled={loading}
             >
               {loading ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Signing in...
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  <span className="text-base">Signing in...</span>
                 </>
               ) : (
-                "Sign In"
+                <span className="text-base">Sign In</span>
               )}
             </Button>
           </form>
@@ -241,7 +164,7 @@ const Login = () => {
             <div className="absolute inset-0 flex items-center">
               <span className="w-full border-t" />
             </div>
-            <div className="relative flex justify-center text-xs uppercase">
+            <div className="relative flex justify-center text-base uppercase">
               <span className="bg-background px-2 text-muted-foreground">
                 Or continue with
               </span>
@@ -252,9 +175,9 @@ const Login = () => {
             variant="outline"
             onClick={handleGoogleLogin}
             disabled={loading}
-            className="w-full"
+            className="w-full h-12 text-base"
           >
-            <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
+            <svg className="mr-2 h-5 w-5" viewBox="0 0 24 24">
               <path
                 fill="currentColor"
                 d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -272,75 +195,41 @@ const Login = () => {
                 d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
               />
             </svg>
-            Continue with Google
+            <span className="text-base">Continue with Google</span>
           </Button>
-
-          {/* Development Tools */}
-          <div className="relative mt-6">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">
-                Development Tools
-              </span>
-            </div>
-          </div>
-
-          <div className="space-y-2 mt-4">
-            <Button
-              variant="secondary"
-              onClick={handleCreateTestAccount}
-              disabled={loading}
-              className="w-full"
-              size="sm"
-            >
-              <UserPlus className="mr-2 h-4 w-4" />
-              Create Test Account
-            </Button>
-            
-            <Button
-              variant="secondary"
-              onClick={handleQuickLogin}
-              disabled={loading}
-              className="w-full"
-              size="sm"
-            >
-              <LogIn className="mr-2 h-4 w-4" />
-              Quick Login (Test Account)
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={handleSeedDatabase}
-              disabled={loading}
-              className="w-full"
-              size="sm"
-            >
-              <Database className="mr-2 h-4 w-4" />
-              Seed Sample Data
-            </Button>
-          </div>
-
-          <div className="mt-4 p-3 bg-muted/50 rounded-lg">
-            <p className="text-xs text-muted-foreground mb-2">Test Account Credentials:</p>
-            <div className="text-xs space-y-1">
-              <div><strong>Email:</strong> {TEST_ACCOUNT.email}</div>
-              <div><strong>Password:</strong> {TEST_ACCOUNT.password}</div>
-              <div><strong>Role:</strong> {TEST_ACCOUNT.role}</div>
-            </div>
-          </div>
         </CardContent>
-        <CardFooter>
-          <p className="text-center text-sm text-muted-foreground w-full">
+        <CardFooter className="flex flex-col space-y-4">
+          <p className="text-center text-lg text-muted-foreground w-full">
             Don't have an account?{" "}
             <Link
               to="/register"
-              className="font-medium text-primary hover:underline"
+              className="font-medium text-primary hover:underline text-lg"
             >
               Sign up
             </Link>
           </p>
+          <div className="text-center text-base text-muted-foreground">
+            <Link
+              to="/endorsements"
+              className="text-primary hover:underline font-medium text-base"
+            >
+              ⭐ See what our users say
+            </Link>
+            {" • "}
+            <Link
+              to="/terms"
+              className="hover:underline text-base"
+            >
+              Terms
+            </Link>
+            {" • "}
+            <Link
+              to="/privacy"
+              className="hover:underline text-base"
+            >
+              Privacy
+            </Link>
+          </div>
         </CardFooter>
       </Card>
     </div>
