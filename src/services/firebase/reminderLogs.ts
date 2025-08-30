@@ -10,7 +10,8 @@ import {
   where, 
   orderBy,
   and,
-  limit
+  limit,
+  Timestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { COLLECTIONS } from './collections';
@@ -185,7 +186,7 @@ export const addReminderLog = async (reminderLog: Omit<ReminderLog, 'reminder_id
   try {
     const docRef = await addDoc(collection(db, COLLECTIONS.REMINDER_LOGS), {
       ...reminderLog,
-      timestamp: new Date().toISOString(),
+      timestamp: reminderLog.timestamp || Timestamp.fromDate(new Date()),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     });
@@ -205,7 +206,7 @@ export const updateReminderLog = async (
     const docRef = doc(db, COLLECTIONS.REMINDER_LOGS, reminderId);
     await updateDoc(docRef, {
       ...updates,
-      timestamp: new Date().toISOString(),
+      timestamp: updates.timestamp || Timestamp.fromDate(new Date()),
       updated_at: new Date().toISOString()
     });
   } catch (error) {
@@ -300,9 +301,9 @@ export const generateMedicationReminders = async (
       const reminderId = await addReminderLog({
         medication_id: medicationId,
         patient_id: patientId,
-        scheduled_time: scheduledTime.toISOString(),
+        scheduled_time: Timestamp.fromDate(scheduledTime),
         status: 'Scheduled',
-        timestamp: new Date().toISOString(),
+        timestamp: Timestamp.fromDate(new Date()),
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       });

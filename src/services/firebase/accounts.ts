@@ -21,8 +21,64 @@ import { db } from '../../lib/firebase'
 import { COLLECTIONS } from './collections'
 import type { Account } from '../../types'
 
+// Helper function to clean up duplicate user records with the same accountId
+const cleanupDuplicateUsers = async (accountId: string): Promise<void> => {
+  try {
+    console.log('🧹 Cleaning up duplicate users for accountId:', accountId)
+    
+    const usersRef = collection(db, 'users')
+    const q = query(usersRef, where('accountId', '==', accountId))
+    const snapshot = await getDocs(q)
+    
+    if (snapshot.docs.length <= 1) {
+      console.log('✅ No duplicates found for accountId:', accountId)
+      return
+    }
+    
+    console.log(`🔍 Found ${snapshot.docs.length} user records with same accountId`)
+    
+    // Find the original user record (the one with more complete data)
+    let originalUserDoc = null
+    let duplicateUserDocs = []
+    
+    for (const userDoc of snapshot.docs) {
+      const userData = userDoc.data()
+      
+      // The original user should have role-specific fields indicating it's the complete record
+      // For caregivers: contact_number, address, user_id, role = "Caregiver"
+      // For patients/guardians: contact_number, address, user_id, role = "Patient" or guardian-related fields
+      const hasCompleteData = userData.contact_number || 
+                             userData.address || 
+                             userData.user_id || 
+                             (userData.role === 'Caregiver') ||
+                             (userData.role === 'Patient') ||
+                             userData.date_of_birth ||
+                             userData.guardian_id
+      
+      if (hasCompleteData) {
+        originalUserDoc = userDoc
+        console.log(`📌 Found original user record (${userData.role || 'unknown role'}): ${userDoc.id}`)
+      } else {
+        duplicateUserDocs.push(userDoc)
+        console.log(`🗑️ Found duplicate user record: ${userDoc.id}`)
+      }
+    }
+    
+    // Delete duplicate records
+    for (const duplicateDoc of duplicateUserDocs) {
+      await deleteDoc(duplicateDoc.ref)
+      console.log(`✅ Deleted duplicate user record: ${duplicateDoc.id}`)
+    }
+    
+    console.log(`🎉 Cleanup complete: kept 1 original, deleted ${duplicateUserDocs.length} duplicates`)
+    
+  } catch (error) {
+    console.error('❌ Error cleaning up duplicate users:', error)
+  }
+}
+
 // Create Firebase Auth user for verified and active accounts
-const createFirebaseAuthUser = async (account: Account): Promise<void> => {
+export const createFirebaseAuthUser = async (account: Account): Promise<string | null> => {
   try {
     console.log('Creating Firebase Auth user for account:', account.id)
     
@@ -42,29 +98,79 @@ const createFirebaseAuthUser = async (account: Account): Promise<void> => {
       displayName: account.name
     })
     
-    // Save user data to Firestore users collection using Auth UID as document ID
-    await setDoc(doc(db, 'users', user.uid), {
-      uid: user.uid,
-      firstName: account.name.split(' ')[0] || '',
-      lastName: account.name.split(' ').slice(1).join(' ') || '',
-      email: account.generated_email,
-      role: account.role,
-      createdAt: new Date().toISOString(),
-      isActive: true,
-      emailVerified: true,
-      accountId: account.id, // Link to the account management record
-      createdFrom: 'account-management'
-    })
+    // Instead of creating a new user document, find and update the existing user record
+    // that has the matching accountId, and move it to use Firebase Auth UID as document ID
+    try {
+      const usersRef = collection(db, 'users')
+      const q = query(usersRef, where('accountId', '==', account.id))
+      const snapshot = await getDocs(q)
+      
+      if (!snapshot.empty) {
+        // Get the existing user data
+        const existingUserDoc = snapshot.docs[0]
+        const existingUserData = existingUserDoc.data()
+        
+        // Create a new document with Firebase Auth UID as document ID
+        await setDoc(doc(db, 'users', user.uid), {
+          ...existingUserData,  // Keep all existing data
+          uid: user.uid,        // Add/update Firebase Auth UID
+          auth_created: true,
+          emailVerified: true,
+          verified: true,
+          updated_at: Timestamp.now()
+        })
+        
+        // Delete the old document (with the old document ID)
+        await deleteDoc(existingUserDoc.ref)
+        
+        console.log(`✅ Moved user record from ${existingUserDoc.id} to ${user.uid} (Firebase Auth UID as document ID)`)
+      } else {
+        console.warn('⚠️ No existing user found with accountId:', account.id)
+        // Fallback: create minimal user record only if no existing user found
+        await setDoc(doc(db, 'users', user.uid), {
+          uid: user.uid,
+          firstName: account.name.split(' ')[0] || '',
+          lastName: account.name.split(' ').slice(1).join(' ') || '',
+          email: account.generated_email,
+          role: account.role,
+          createdAt: new Date().toISOString(),
+          isActive: true,
+          emailVerified: true,
+          accountId: account.id,
+          createdFrom: 'account-management'
+        })
+      }
+    } catch (updateError) {
+      console.error('Error updating existing user record:', updateError)
+      // Fallback to original behavior if update fails
+      await setDoc(doc(db, 'users', user.uid), {
+        uid: user.uid,
+        firstName: account.name.split(' ')[0] || '',
+        lastName: account.name.split(' ').slice(1).join(' ') || '',
+        email: account.generated_email,
+        role: account.role,
+        createdAt: new Date().toISOString(),
+        isActive: true,
+        emailVerified: true,
+        accountId: account.id,
+        createdFrom: 'account-management'
+      })
+    }
     
     console.log('Firebase Auth user created and linked successfully with UID as document ID:', user.uid)
     
+    // Clean up any duplicate user records (keep only the original user record)
+    await cleanupDuplicateUsers(account.id)
+    
+    return user.uid
   } catch (error: any) {
     console.error('Error creating Firebase Auth user:', error)
     
     // If the error is that the email already exists, that's okay
     if (error.code === 'auth/email-already-in-use') {
       console.log('Firebase Auth user already exists for this email')
-      return
+      // Try to find existing user by email via Admin SDK is not possible here; return null to indicate existing
+      return null
     }
     
     throw new Error(`Failed to create Firebase Auth user: ${error.message}`)
@@ -91,6 +197,10 @@ export const createAccount = async (accountData: Omit<Account, 'id' | 'createdAt
     // Only add optional fields if they have values (not undefined)
     if (accountData.verifiedAt !== undefined) {
       cleanedData.verifiedAt = accountData.verifiedAt
+    }
+    // Persist verification token if provided (used for one-click email verification)
+    if ((accountData as any).verification_token !== undefined) {
+      cleanedData.verification_token = (accountData as any).verification_token
     }
     if (accountData.lastLogin !== undefined) {
       cleanedData.lastLogin = accountData.lastLogin
@@ -261,12 +371,18 @@ export const deleteAccount = async (accountId: string): Promise<void> => {
 // Verify account (used when user clicks confirmation link)
 export const verifyAccount = async (accountId: string): Promise<void> => {
   try {
-    const accountRef = doc(db, COLLECTIONS.ACCOUNTS, accountId)
+    let accountRef = doc(db, COLLECTIONS.ACCOUNTS, accountId)
+    let currentAccountDoc = await getDoc(accountRef)
     
-    // Get current account data
-    const currentAccountDoc = await getDoc(accountRef)
+    // If not found in accounts collection, try users collection (for existing caregivers)
     if (!currentAccountDoc.exists()) {
-      throw new Error('Account not found')
+      console.log('Account not found in accounts collection, checking users collection...')
+      accountRef = doc(db, 'users', accountId)
+      currentAccountDoc = await getDoc(accountRef)
+      
+      if (!currentAccountDoc.exists()) {
+        throw new Error('Account not found in either accounts or users collection')
+      }
     }
     
     const currentAccount = { 

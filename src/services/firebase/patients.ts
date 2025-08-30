@@ -8,29 +8,68 @@ import {
   deleteDoc, 
   query, 
   where, 
-  orderBy 
+  orderBy,
+  Timestamp 
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { COLLECTIONS } from './collections';
 import { Patient, Caregiver } from '@/types';
 import { updateCaregiverPatientCount } from './caregivers';
 
-// Get all patients with retry logic
+// Get all patients with retry logic using User-centered approach
 export const getPatients = async (): Promise<Patient[]> => {
   const maxRetries = 3;
   let lastError: any;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`Attempt ${attempt} to fetch patients...`);
-      const querySnapshot = await getDocs(
-        query(collection(db, COLLECTIONS.PATIENTS), orderBy('first_name'))
+      console.log(`Attempt ${attempt} to fetch patients with User-centered approach...`);
+      
+      // Get all patient documents
+      const patientsSnapshot = await getDocs(collection(db, COLLECTIONS.PATIENTS));
+      console.log(`Found ${patientsSnapshot.docs.length} patient records`);
+      
+      // Get user data for each patient
+      const { getUserById } = await import('./users');
+      const patientsWithUserData = await Promise.all(
+        patientsSnapshot.docs.map(async (patientDoc) => {
+          const patientData = patientDoc.data();
+          const patient_id = patientDoc.id;
+          
+          // Get corresponding user data using user_id
+          let userData = null;
+          if (patientData.user_id) {
+            try {
+              userData = await getUserById(patientData.user_id);
+            } catch (userError) {
+              console.warn(`Could not fetch user data for patient ${patient_id}:`, userError);
+            }
+          }
+          
+          // Combine patient and user data
+          return {
+            patient_id,
+            ...patientData,
+            // Override with user data if available (User-centered approach)
+            ...(userData && {
+              first_name: userData.first_name,
+              last_name: userData.last_name,
+              email: userData.email,
+              contact_number: userData.contact_number,
+              address: userData.address
+            })
+          } as Patient;
+        })
       );
-      console.log(`Successfully fetched ${querySnapshot.docs.length} patients`);
-      return querySnapshot.docs.map(doc => ({
-        patient_id: doc.id,
-        ...doc.data()
-      })) as Patient[];
+      
+      // Sort by first name
+      const sortedPatients = patientsWithUserData.sort((a, b) => 
+        (a.first_name || '').localeCompare(b.first_name || '')
+      );
+      
+      console.log(`Successfully fetched and merged ${sortedPatients.length} patients with user data`);
+      return sortedPatients;
+      
     } catch (error: any) {
       console.error(`Error fetching patients (attempt ${attempt}):`, error);
       lastError = error;
@@ -54,19 +93,44 @@ export const getPatients = async (): Promise<Patient[]> => {
   throw lastError;
 }
 
-// Get patient by ID
+// Get patient by ID using User-centered approach
 export const getPatient = async (patientId: string): Promise<Patient | null> => {
   try {
+    // Get patient document
     const docRef = doc(db, COLLECTIONS.PATIENTS, patientId);
     const docSnap = await getDoc(docRef);
     
-    if (docSnap.exists()) {
-      return {
-        patient_id: docSnap.id,
-        ...docSnap.data()
-      } as Patient;
+    if (!docSnap.exists()) {
+      return null;
     }
-    return null;
+    
+    const patientData = docSnap.data();
+    
+    // Get corresponding user data using user_id
+    let userData = null;
+    if (patientData.user_id) {
+      try {
+        const { getUserById } = await import('./users');
+        userData = await getUserById(patientData.user_id);
+      } catch (userError) {
+        console.warn(`Could not fetch user data for patient ${patientId}:`, userError);
+      }
+    }
+    
+    // Combine patient and user data
+    return {
+      patient_id: docSnap.id,
+      ...patientData,
+      // Override with user data if available (User-centered approach)
+      ...(userData && {
+        first_name: userData.first_name,
+        last_name: userData.last_name,
+        email: userData.email,
+        contact_number: userData.contact_number,
+        address: userData.address
+      })
+    } as Patient;
+    
   } catch (error) {
     console.error('Error fetching patient:', error);
     throw error;
@@ -76,81 +140,134 @@ export const getPatient = async (patientId: string): Promise<Patient | null> => 
 // Add new patient
 export const addPatient = async (patient: Omit<Patient, 'patient_id'>): Promise<string> => {
   try {
+    console.log('Creating patient with User-centered approach:', patient);
+
+    // Step 1: Create core user document in users collection
     let user_id: string | undefined;
-    let tempPassword: string | undefined;
     
-    // Create Firebase Auth user account if guardian_email is provided
-    if (patient.guardian_email && patient.guardian_email.trim() !== '') {
-      try {
-        const { createUserAccount } = await import('./users');
-        const userAccount = await createUserAccount(
-          patient.guardian_email,
-          'patient',
-          patient.first_name,
-          patient.last_name
-        );
-        user_id = userAccount.uid;
-        tempPassword = userAccount.tempPassword;
-        
-        console.log(`Created user account for patient ${patient.first_name} ${patient.last_name}:`);
-        console.log(`Email: ${patient.guardian_email}`);
-        console.log(`Temporary Password: ${tempPassword}`);
-        console.log('⚠️ Share this temporary password with the guardian for initial login');
-      } catch (userError) {
-        console.error('Error creating user account for patient:', userError);
-        // Continue with patient creation even if user account creation fails
+    try {
+      const { createUser } = await import('./users');
+      
+      const userAccount = await createUser({
+        first_name: patient.first_name || '',
+        last_name: patient.last_name || '',
+        email: patient.email || '',
+        role: 'Patient',
+        contact_number: patient.contact_number?.toString() || '',
+        address: patient.address || ''
+      });
+      
+      user_id = userAccount.user_id;
+      
+      console.log(`✅ Created core user document for patient ${patient.first_name} ${patient.last_name}:`);
+      console.log(`📄 Document ID: ${user_id}`);
+      console.log(`📧 Email: ${userAccount.email}`);
+      console.log(`ℹ️ Note: No automated auth account created, document-only user`);
+      
+      // Step 2: Create patient-specific record in patients collection
+      const patientSpecificData: any = {
+        patient_id: user_id, // Same as user_id (FK → User.user_id)
+        birthdate: patient.birthdate,
+        gender: patient.gender,
+        created_at: Timestamp.now(),
+        updated_at: Timestamp.now(),
+        is_active: true
+      };
+
+      // Only add patient-specific fields if they have values
+      if (patient.assigned_caregiver_id) patientSpecificData.assigned_caregiver_id = patient.assigned_caregiver_id;
+      if (patient.assigned_day_caregiver_id) patientSpecificData.assigned_day_caregiver_id = patient.assigned_day_caregiver_id;
+      if (patient.assigned_night_caregiver_id) patientSpecificData.assigned_night_caregiver_id = patient.assigned_night_caregiver_id;
+      if (patient.emergency_contact_name) patientSpecificData.emergency_contact_name = patient.emergency_contact_name;
+      if (patient.emergency_contact_phone) patientSpecificData.emergency_contact_phone = patient.emergency_contact_phone;
+      if (patient.emergency_contact_relationship) patientSpecificData.emergency_contact_relationship = patient.emergency_contact_relationship;
+      if (patient.email) patientSpecificData.email = patient.email;
+      if (patient.care_notes) patientSpecificData.care_notes = patient.care_notes;
+      if (patient.medical_conditions) patientSpecificData.medical_conditions = patient.medical_conditions;
+      if (patient.mobility_level) patientSpecificData.mobility_level = patient.mobility_level;
+      if (patient.contract_start_date) patientSpecificData.contract_start_date = patient.contract_start_date;
+      if (patient.contract_end_date) patientSpecificData.contract_end_date = patient.contract_end_date;
+
+      // Save to patients collection
+      const patientDocRef = await addDoc(collection(db, COLLECTIONS.PATIENTS), patientSpecificData);
+      
+      console.log(`✅ Created patient-specific record with ID: ${patientDocRef.id}`);
+      console.log(`🎉 Patient ${patient.first_name} ${patient.last_name} created successfully!`);
+      
+      // Update caregiver patient counts for all assigned caregivers
+      const caregiverIds = [
+        patient.assigned_caregiver_id,
+        patient.assigned_day_caregiver_id,
+        patient.assigned_night_caregiver_id
+      ].filter(id => id && id.trim() !== '');
+
+      for (const caregiverId of caregiverIds) {
+        await updateCaregiverPatientCount(caregiverId);
       }
+      
+      return user_id; // Return the user_id as the patient identifier
+      
+    } catch (userError) {
+      console.error('Error creating patient user account:', userError);
+      throw userError;
     }
     
-    // Create patient document with user_id if available
-    const patientData = {
-      ...patient,
-      user_id,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    
-    const docRef = await addDoc(collection(db, COLLECTIONS.PATIENTS), patientData);
-    
-    // Link user to patient if user account was created
-    if (user_id) {
-      try {
-        const { linkUserToPatient } = await import('./users');
-        await linkUserToPatient(user_id, docRef.id);
-      } catch (linkError) {
-        console.error('Error linking user to patient:', linkError);
-        // Continue since patient was already created
-      }
-    }
-    
-    // Update caregiver patient counts for all assigned caregivers
-    const caregiverIds = [
-      patient.assigned_caregiver_id,
-      patient.assigned_day_caregiver_id,
-      patient.assigned_night_caregiver_id
-    ].filter(id => id && id.trim() !== '');
-    
-    for (const caregiverId of caregiverIds) {
-      await updateCaregiverPatientCount(caregiverId);
-    }
-    
-    return docRef.id;
   } catch (error) {
     console.error('Error adding patient:', error);
     throw error;
   }
 };
 
-// Update patient
+// Update patient using User-centered approach
 export const updatePatient = async (patientId: string, updates: Partial<Omit<Patient, 'patient_id'>>): Promise<void> => {
   try {
+    console.log('Updating patient with User-centered approach:', patientId, updates);
+    
     // Get the current patient data to check for caregiver changes
     const currentPatient = await getPatient(patientId);
     if (!currentPatient) {
       throw new Error('Patient not found');
     }
     
-    // Track all old and new caregiver assignments
+    // Separate user data from patient-specific data
+    const userUpdates: any = {};
+    const patientUpdates: any = {};
+    
+    // Categorize updates
+    Object.entries(updates).forEach(([key, value]) => {
+      if (['first_name', 'last_name', 'email', 'contact_number', 'address'].includes(key)) {
+        userUpdates[key] = value;
+      } else {
+        patientUpdates[key] = value;
+      }
+    });
+    
+    // Update user document if there are user-level changes
+    if (Object.keys(userUpdates).length > 0 && currentPatient.patient_id) {
+      try {
+        const { updateUser } = await import('./users');
+        await updateUser(currentPatient.patient_id, {
+          ...userUpdates,
+          updated_at: Timestamp.now()
+        });
+        console.log(`✅ Updated user document for patient ${patientId}`);
+      } catch (userError) {
+        console.error('Error updating user document:', userError);
+        // Continue with patient update even if user update fails
+      }
+    }
+    
+    // Update patient document if there are patient-specific changes
+    if (Object.keys(patientUpdates).length > 0) {
+      const docRef = doc(db, COLLECTIONS.PATIENTS, patientId);
+      await updateDoc(docRef, {
+        ...patientUpdates,
+        updated_at: Timestamp.now()
+      });
+      console.log(`✅ Updated patient document for patient ${patientId}`);
+    }
+    
+    // Track all old and new caregiver assignments for count updates
     const oldCaregiverIds = [
       currentPatient.assigned_caregiver_id,
       currentPatient.assigned_day_caregiver_id,
@@ -163,12 +280,9 @@ export const updatePatient = async (patientId: string, updates: Partial<Omit<Pat
       updates.assigned_night_caregiver_id !== undefined ? updates.assigned_night_caregiver_id : currentPatient.assigned_night_caregiver_id
     ].filter(id => id && id.trim() !== '');
     
-    // Update the patient document
-    const docRef = doc(db, COLLECTIONS.PATIENTS, patientId);
-    await updateDoc(docRef, {
-      ...updates,
-      updated_at: new Date().toISOString()
-    });
+    console.log(`🎉 Patient ${patientId} updated successfully with User-centered approach`);
+    
+    // Update caregiver patient counts for all affected caregivers
     
     // Find caregivers that need count updates
     const allCaregiverIds = [...new Set([...oldCaregiverIds, ...newCaregiverIds])];
@@ -183,11 +297,17 @@ export const updatePatient = async (patientId: string, updates: Partial<Omit<Pat
   }
 };
 
-// Delete patient
+// Delete patient using User-centered approach
 export const deletePatient = async (patientId: string): Promise<void> => {
   try {
-    // Get the patient data to check for caregiver assignments
+    console.log('Deleting patient with User-centered approach:', patientId);
+    
+    // Get the patient data to check for caregiver assignments and user_id
     const patient = await getPatient(patientId);
+    
+    if (!patient) {
+      throw new Error('Patient not found');
+    }
     
     // Collect all caregiver IDs that need updating
     const caregiverIds = [
@@ -196,9 +316,24 @@ export const deletePatient = async (patientId: string): Promise<void> => {
       patient?.assigned_night_caregiver_id
     ].filter(id => id && id.trim() !== '');
     
-    // Delete the patient document
-    const docRef = doc(db, COLLECTIONS.PATIENTS, patientId);
-    await deleteDoc(docRef);
+    // Delete the patient document first
+    const patientDocRef = doc(db, COLLECTIONS.PATIENTS, patientId);
+    await deleteDoc(patientDocRef);
+    console.log(`✅ Deleted patient document: ${patientId}`);
+    
+    // Delete the corresponding user document if it exists
+    if (patient.patient_id) {
+      try {
+        const { deleteUser } = await import('./users');
+        await deleteUser(patient.patient_id);
+        console.log(`✅ Deleted user document: ${patient.patient_id}`);
+      } catch (userError) {
+        console.error('Error deleting user document:', userError);
+        // Continue since patient document is already deleted
+      }
+    }
+    
+    console.log(`🎉 Patient ${patientId} deleted successfully with User-centered approach`);
     
     // Update caregiver patient counts for all assigned caregivers
     for (const caregiverId of caregiverIds) {

@@ -121,7 +121,7 @@ const Patients = () => {
     emergency_contact_name: "",
     emergency_contact_phone: "",
     emergency_contact_relationship: "",
-    guardian_email: "",
+    email: "",
     contract_start_date: "",
     contract_end_date: "",
     medical_history: {
@@ -440,7 +440,7 @@ const Patients = () => {
       emergency_contact_name: "",
       emergency_contact_phone: "",
       emergency_contact_relationship: "",
-      guardian_email: "",
+      email: "",
       contract_start_date: "",
       contract_end_date: "",
       medical_history: {
@@ -765,7 +765,7 @@ const Patients = () => {
       emergency_contact_name: patient.emergency_contact_name || "",
       emergency_contact_phone: patient.emergency_contact_phone ? String(patient.emergency_contact_phone) : "",
       emergency_contact_relationship: patient.emergency_contact_relationship || "",
-      guardian_email: patient.guardian_email || "",
+      email: patient.email || "",
       contract_start_date: patient.contract_start_date || "",
       contract_end_date: patient.contract_end_date || "",
       medical_history: {
@@ -852,11 +852,11 @@ const Patients = () => {
         gender: formData.gender,
         contact_number: Number(formData.contact_number),
         address: `${formData.address.street}, ${formData.address.barangay}, ${formData.address.city_municipality}, ${formData.address.province}`.replace(/,\s*,/g, ',').replace(/^,\s*|,\s*$/g, ''),
-        guardian_email: formData.guardian_email,
+        email: formData.email,
         assigned_day_caregiver_id: formData.assigned_day_caregiver_id,
         assigned_night_caregiver_id: formData.assigned_night_caregiver_id,
         emergency_contact_name: formData.emergency_contact_name,
-        emergency_contact_phone: Number(formData.emergency_contact_phone),
+        emergency_contact_phone: formData.emergency_contact_phone,
         emergency_contact_relationship: formData.emergency_contact_relationship,
         contract_start_date: formData.contract_start_date,
         contract_end_date: formData.contract_end_date,
@@ -884,9 +884,6 @@ const Patients = () => {
               description: `Current medical condition - Updated for ${patientName}`,
               date_diagnosed: recordDate,
               treatment: '',
-              severity: 'Moderate',
-              status: 'Active',
-              notes: `Updated during patient record modification for ${patientName}`
             })
           }
           if (conditions.hypertension) {
@@ -1189,11 +1186,11 @@ const Patients = () => {
         gender: formData.gender,
         contact_number: Number(formData.contact_number),
         address: `${formData.address.street}, ${formData.address.barangay}, ${formData.address.city_municipality}, ${formData.address.province}`.replace(/,\s*,/g, ',').replace(/^,\s*|,\s*$/g, ''),
-        guardian_email: formData.guardian_email,
+        email: formData.email,
         assigned_day_caregiver_id: formData.assigned_day_caregiver_id,
         assigned_night_caregiver_id: formData.assigned_night_caregiver_id,
         emergency_contact_name: formData.emergency_contact_name,
-        emergency_contact_phone: Number(formData.emergency_contact_phone),
+        emergency_contact_phone: formData.emergency_contact_phone,
         emergency_contact_relationship: formData.emergency_contact_relationship,
         contract_start_date: formData.contract_start_date,
         contract_end_date: formData.contract_end_date,
@@ -1872,6 +1869,16 @@ const Patients = () => {
                   </div>
                 </div>
                 <div className="grid gap-2">
+                  <Label htmlFor="guardianEmail">Email</Label>
+                  <Input 
+                    id="guardianEmail" 
+                    placeholder="Enter patient email address"
+                    value={formData.email}
+                    onChange={(e) => handleInputChange("email", e.target.value)}
+                    type="email"
+                  />
+                </div>
+                <div className="grid gap-2">
                   <Label htmlFor="phone">Phone Number</Label>
                   <Input 
                     id="phone" 
@@ -1977,16 +1984,6 @@ const Patients = () => {
                         placeholder="e.g., Son, Daughter, Spouse, Friend"
                         value={formData.emergency_contact_relationship}
                         onChange={(e) => handleInputChange("emergency_contact_relationship", e.target.value)}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="guardianEmail">Guardian Email</Label>
-                      <Input 
-                        id="guardianEmail" 
-                        placeholder="Enter guardian email address"
-                        value={formData.guardian_email}
-                        onChange={(e) => handleInputChange("guardian_email", e.target.value)}
-                        type="email"
                       />
                     </div>
                   </div>
@@ -2680,8 +2677,8 @@ const Patients = () => {
                     <p className="text-sm">{viewingPatient.emergency_contact_relationship || "Not provided"}</p>
                   </div>
                   <div>
-                    <Label className="text-xs text-muted-foreground">Guardian Email</Label>
-                    <p className="text-sm">{viewingPatient.guardian_email || "Not provided"}</p>
+                    <Label className="text-xs text-muted-foreground">Email</Label>
+                    <p className="text-sm">{viewingPatient.email || "Not provided"}</p>
                   </div>
                 </div>
               </div>
@@ -2866,12 +2863,12 @@ const Patients = () => {
               />
             </div>
             <div>
-              <Label htmlFor="edit-guardian-email">Guardian Email</Label>
+              <Label htmlFor="edit-guardian-email">Email</Label>
               <Input
                 id="edit-guardian-email"
-                value={formData.guardian_email}
-                onChange={(e) => handleInputChange("guardian_email", e.target.value)}
-                placeholder="Enter guardian email address"
+                value={formData.email}
+                onChange={(e) => handleInputChange("email", e.target.value)}
+                placeholder="Enter patient email address"
                 type="email"
               />
             </div>

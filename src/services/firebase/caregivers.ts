@@ -132,51 +132,62 @@ type FirebaseCaregiver = {
 // Get all caregivers
 export const getCaregivers = async (): Promise<Caregiver[]> => {
   try {
-    // Fetch caregivers from users collection where user_lvl is 'caregiver'
-    const usersQuery = query(
-      collection(db, COLLECTIONS.USERS),
-      where('user_lvl', '==', 'caregiver'),
-      orderBy('first_name')
+    // Get all caregivers from users collection where role is 'Caregiver'
+    console.log('🔍 Fetching caregivers from users collection...');
+    const usersQuery = query(collection(db, 'users'), where('role', '==', 'Caregiver'));
+    const querySnapshot = await getDocs(usersQuery);
+    
+    console.log(`🔍 Found ${querySnapshot.docs.length} caregivers in users collection`);
+    
+    const caregivers: Caregiver[] = querySnapshot.docs.map(doc => {
+      const userData = doc.data();
+      const caregiver: Caregiver = {
+        caregiver_id: doc.id,
+        user_id: userData.user_id || doc.id,
+        first_name: userData.first_name || '',
+        last_name: userData.last_name || '',
+        middle_name: userData.middle_name,
+        birthday: userData.birthday,
+        email: userData.email || '',
+        contact_number: userData.contact_number || 0,
+        address: userData.address,
+        shift_type: userData.shift_type || 'Day',
+        shift_start_date: userData.shift_start_date,
+        shift_end_date: userData.shift_end_date,
+        role: userData.role || 'Eldercare',
+        hire_date: userData.hire_date || new Date().toISOString(),
+        status: userData.status || 'Active',
+        assigned_patients_count: userData.assigned_patients_count || 0,
+        max_patients: userData.max_patients || 2,
+        license_number: userData.license_number || '',
+        license_picture: userData.license_picture || '',
+        contract_start_date: userData.contract_start_date,
+        contract_end_date: userData.contract_end_date,
+        specialization: userData.specialization,
+        temporary_schedule_reason: userData.temporary_schedule_reason,
+        original_shift_type: userData.original_shift_type,
+        original_shift_start_date: userData.original_shift_start_date,
+        original_shift_end_date: userData.original_shift_end_date,
+        created_at: userData.created_at,
+        updated_at: userData.updated_at
+      };
+      
+      console.log(`🔍 Caregiver ${doc.id}: ${caregiver.first_name} ${caregiver.last_name} (${caregiver.email})`);
+      return caregiver;
+    });
+    
+    // Sort by first name
+    const sortedCaregivers = caregivers.sort((a, b) => 
+      (a.first_name || '').localeCompare(b.first_name || '')
     );
     
-    const querySnapshot = await getDocs(usersQuery);
-    const caregiverUsers = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as any));
+    console.log(`🔍 Successfully fetched ${sortedCaregivers.length} caregivers`);
+    console.log(`🔍 Caregiver emails:`, sortedCaregivers.map(c => c.email).filter(e => e));
     
-    // Convert User objects to Caregiver objects
-    return caregiverUsers.map((user: any) => ({
-      caregiver_id: user.uid,
-      user_id: user.uid,
-      first_name: user.first_name,
-      last_name: user.last_name,
-      email: user.email,
-      contact_number: user.contact_number || (user.phone ? parseInt(user.phone) : 0),
-      shift_type: user.shift_type || 'Day',
-      role: user.role || 'caregiver',
-      hire_date: user.hire_date || new Date().toISOString(),
-      status: user.status || 'Active',
-      assigned_patients_count: user.assigned_patients_count || 0,
-      max_patients: user.max_patients || 2,
-      license_number: user.license_number || '',
-      license_picture: user.license_image_base64 || user.license_picture || '',
-      created_at: user.created_at,
-      updated_at: user.updated_at,
-      // Add other fields that might be in user object
-      middle_name: user.middle_name,
-      birthday: user.birthday || user.date_of_birth,
-      address: user.address,
-      shift_start_date: user.shift_start_date,
-      shift_end_date: user.shift_end_date,
-      specialization: user.specialization || user.specializations?.join(', '),
-      contract_start_date: user.contract_start_date,
-      contract_end_date: user.contract_end_date,
-      temporary_schedule_reason: user.temporary_schedule_reason,
-      original_shift_type: user.original_shift_type,
-      original_shift_start_date: user.original_shift_start_date,
-      original_shift_end_date: user.original_shift_end_date
-    })) as Caregiver[];
+    return sortedCaregivers;
   } catch (error) {
     console.error('Error fetching caregivers:', error);
-    throw error;
+    return [];
   }
 };
 
@@ -184,35 +195,35 @@ export const getCaregivers = async (): Promise<Caregiver[]> => {
 export const getCaregiver = async (caregiverId: string): Promise<Caregiver | null> => {
   try {
     // Fetch caregiver from users collection using UID
-    const { getUserByUID } = await import('./users');
-    const user = await getUserByUID(caregiverId);
+    const { getUserById } = await import('./users');
+    const user = await getUserById(caregiverId);
     
-    if (user && user.user_lvl === 'caregiver') {
+    if (user && user.role === 'Caregiver') {
       // Convert User object to Caregiver object
       return {
-        caregiver_id: user.uid,
-        user_id: user.uid,
+        caregiver_id: user.id,
+        user_id: user.id,
         first_name: user.first_name,
         last_name: user.last_name,
         email: user.email,
-        contact_number: user.phone ? parseInt(user.phone) : 0,
+        contact_number: user.contact_number ? parseInt(user.contact_number) : 0,
         shift_type: (user as any).shift_type || 'Day',
         role: (user as any).role || 'caregiver',
         hire_date: (user as any).hire_date || new Date().toISOString(),
         status: (user as any).status || 'Active',
         assigned_patients_count: (user as any).assigned_patients_count || 0,
         max_patients: (user as any).max_patients || 2,
-        license_number: user.license_number || '',
-        license_picture: user.license_image_base64 || '',
+        license_number: (user as any).license_number || '',
+        license_picture: (user as any).license_picture || '',
         created_at: user.created_at,
         updated_at: user.updated_at,
         // Add other fields that might be in user object
         middle_name: (user as any).middle_name,
-        birthday: user.date_of_birth,
-        address: (user as any).address,
+        birthday: (user as any).birthday,
+        address: user.address,
         shift_start_date: (user as any).shift_start_date,
         shift_end_date: (user as any).shift_end_date,
-        specialization: user.specializations?.join(', '),
+        specialization: (user as any).specialization,
         contract_start_date: (user as any).contract_start_date,
         contract_end_date: (user as any).contract_end_date,
         temporary_schedule_reason: (user as any).temporary_schedule_reason,
@@ -229,7 +240,7 @@ export const getCaregiver = async (caregiverId: string): Promise<Caregiver | nul
 };
 
 // Add new caregiver
-export const addCaregiver = async (caregiver: FirebaseCaregiver): Promise<string> => {
+export const addCaregiver = async (caregiver: any): Promise<string> => {
   try {
     // Check if user is authenticated
     const currentUser = auth.currentUser;
@@ -240,27 +251,56 @@ export const addCaregiver = async (caregiver: FirebaseCaregiver): Promise<string
       throw new Error('User not authenticated');
     }
 
-    // Create user account with all caregiver data stored in users collection
-    let tempPassword: string | undefined;
+    // Step 1: Create core user document in users collection
     let user_id: string | undefined;
     
     try {
-      const { createCaregiverUserAccount } = await import('./users');
+      const { createUser } = await import('./users');
       
-      const userAccount = await createCaregiverUserAccount({
-        ...caregiver,
-        assigned_patients_count: 0, // Initialize to 0
-        max_patients: getMaxPatientsForShift(caregiver.shift_type), // Set based on shift type
-        status: 'Active' // Default to Active status for new caregivers
+      const userAccount = await createUser({
+        first_name: caregiver.first_name,
+        last_name: caregiver.last_name,
+        middle_name: caregiver.middle_name,
+        email: caregiver.email,
+        role: 'Caregiver',
+        contact_number: caregiver.contact_number?.toString() || '',
+        address: typeof caregiver.address === 'string' ? caregiver.address : JSON.stringify(caregiver.address)
       });
       
-      tempPassword = userAccount.tempPassword;
-      user_id = userAccount.uid;
+      user_id = userAccount.user_id;
       
-      console.log(`Created caregiver user account for ${caregiver.first_name} ${caregiver.last_name}:`);
-      console.log(`Email: ${userAccount.user.email}`);
-      console.log(`Temporary Password: ${tempPassword}`);
-      console.log('⚠️ Share this temporary password with the caregiver for initial login');
+      console.log(`✅ Created core user document for ${caregiver.first_name} ${caregiver.last_name}:`);
+      console.log(`� Document ID: ${user_id}`);
+      console.log(`📧 Email: ${userAccount.email}`);
+      console.log(`ℹ️ Note: No automated auth account created`);
+      
+      
+      // Step 2: Create caregiver-specific record in caregivers collection
+      const caregiverSpecificData: any = {
+        caregiver_id: user_id, // Same as user_id (FK → User.user_id)
+        shift_type: caregiver.shift_type,
+        assigned_patients_count: 0, // Initialize to 0
+        max_patients: getMaxPatientsForShift(caregiver.shift_type),
+        status: 'Active',
+        created_at: Timestamp.now(),
+        updated_at: Timestamp.now()
+      };
+
+      // Only add caregiver-specific fields if they have values
+      if (caregiver.hire_date) caregiverSpecificData.hire_date = caregiver.hire_date;
+      if (caregiver.license_number) caregiverSpecificData.license_number = caregiver.license_number;
+      if (caregiver.license_picture) caregiverSpecificData.license_picture = caregiver.license_picture;
+      if (caregiver.specialization) caregiverSpecificData.specialization = caregiver.specialization;
+      if (caregiver.shift_start_date) caregiverSpecificData.shift_start_date = caregiver.shift_start_date;
+      if (caregiver.shift_end_date) caregiverSpecificData.shift_end_date = caregiver.shift_end_date;
+      if (caregiver.contract_start_date) caregiverSpecificData.contract_start_date = caregiver.contract_start_date;
+      if (caregiver.contract_end_date) caregiverSpecificData.contract_end_date = caregiver.contract_end_date;
+
+      // Save to caregivers collection
+      const caregiverDocRef = await addDoc(collection(db, COLLECTIONS.CAREGIVERS), caregiverSpecificData);
+      
+      console.log(`✅ Created caregiver-specific record with ID: ${caregiverDocRef.id}`);
+      console.log(`🎉 Caregiver ${caregiver.first_name} ${caregiver.last_name} created successfully!`);
       
       // Create initial shift records if schedule dates are provided
       if (caregiver.shift_start_date && caregiver.shift_end_date) {
@@ -398,8 +438,47 @@ export const updateCaregiver = async (caregiverId: string, updates: Partial<Fire
 // Delete caregiver
 export const deleteCaregiver = async (caregiverId: string): Promise<void> => {
   try {
-    const docRef = doc(db, COLLECTIONS.CAREGIVERS, caregiverId);
+    console.log('Deleting caregiver:', caregiverId);
+    
+    // Check if any patients are assigned to this caregiver
+    const patientsQuery = query(
+      collection(db, COLLECTIONS.PATIENTS),
+      where('assigned_caregiver_id', '==', caregiverId)
+    );
+    const patientsSnapshot = await getDocs(patientsQuery);
+    
+    if (!patientsSnapshot.empty) {
+      console.log(`Found ${patientsSnapshot.size} patients assigned to caregiver ${caregiverId}`);
+      throw new Error(`Cannot delete caregiver. ${patientsSnapshot.size} patient(s) are still assigned to this caregiver. Please reassign patients first.`);
+    }
+    
+    // Check for day shift assignments
+    const dayPatientsQuery = query(
+      collection(db, COLLECTIONS.PATIENTS),
+      where('assigned_day_caregiver_id', '==', caregiverId)
+    );
+    const dayPatientsSnapshot = await getDocs(dayPatientsQuery);
+    
+    // Check for night shift assignments
+    const nightPatientsQuery = query(
+      collection(db, COLLECTIONS.PATIENTS),
+      where('assigned_night_caregiver_id', '==', caregiverId)
+    );
+    const nightPatientsSnapshot = await getDocs(nightPatientsQuery);
+    
+    const totalAssignments = dayPatientsSnapshot.size + nightPatientsSnapshot.size;
+    
+    if (totalAssignments > 0) {
+      console.log(`Found ${totalAssignments} shift assignments for caregiver ${caregiverId}`);
+      throw new Error(`Cannot delete caregiver. ${totalAssignments} shift assignment(s) still exist. Please reassign patients first.`);
+    }
+    
+    // Since caregivers are now stored in the users collection with User-centered design,
+    // we need to delete from the users collection
+    const docRef = doc(db, COLLECTIONS.USERS, caregiverId);
     await deleteDoc(docRef);
+    
+    console.log('Successfully deleted caregiver:', caregiverId);
   } catch (error) {
     console.error('Error deleting caregiver:', error);
     throw error;

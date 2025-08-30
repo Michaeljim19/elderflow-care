@@ -14,7 +14,9 @@ import {
   CheckCircle,
   AlertCircle,
   UserCheck,
-  Key
+  Key,
+  Settings,
+  Trash2
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,54 +52,24 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { sendAccountCreationEmail } from "@/services/emailjs";
 import { getPatients } from "@/services/firebase/patients";
-import { createAccount, getAccounts, updateAccount, deleteAccount, createFirebaseAuthForAccount, createFirebaseAuthForAllActiveAccounts } from "@/services/firebase/accounts";
+import { deleteUser } from "@/services/firebase/users";
+import { createAccount, getAccounts, updateAccount, deleteAccount, createFirebaseAuthForAccount, createFirebaseAuthForAllActiveAccounts, verifyAccount } from "@/services/firebase/accounts";
 import type { Caregiver, Patient, Account } from "@/types";
 import { collection, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { db, auth } from "@/lib/firebase";
+import { migrateGuardianToPatient } from "@/scripts/migrateGuardianToPatient";
 
 // Self-contained getCaregivers function
 const getCaregivers = async (): Promise<Caregiver[]> => {
   try {
-    const q = query(collection(db, 'users'), where('user_lvl', '==', 'caregiver'));
-    const querySnapshot = await getDocs(q);
-    const caregiverUsers = querySnapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as any));
-
-    const caregivers = caregiverUsers.map((user: any) => ({
-      caregiver_id: user.uid,
-      user_id: user.uid,
-      first_name: user.first_name,
-      last_name: user.last_name,
-      email: user.email,
-      contact_number: user.phone ? parseInt(user.phone) : 0,
-      shift_type: user.shift_type || 'Day',
-      role: user.role || 'caregiver',
-      hire_date: user.hire_date || new Date().toISOString(),
-      status: user.status || 'Active',
-      assigned_patients_count: user.assigned_patients_count || 0,
-      max_patients: user.max_patients || 2,
-      license_number: user.license_number || '',
-      license_picture: user.license_image_base64 || user.license_picture || '',
-      created_at: user.created_at,
-      updated_at: user.updated_at,
-      middle_name: user.middle_name,
-      birthday: user.birthday || user.date_of_birth,
-      address: user.address,
-      shift_start_date: user.shift_start_date,
-      shift_end_date: user.shift_end_date,
-      specialization: user.specialization || user.specializations?.join(', '),
-      contract_start_date: user.contract_start_date,
-      contract_end_date: user.contract_end_date,
-      temporary_schedule_reason: user.temporary_schedule_reason,
-      original_shift_type: user.original_shift_type,
-      original_shift_start_date: user.original_shift_start_date,
-      original_shift_end_date: user.original_shift_end_date,
-      auth_created: user.auth_created || false,
-      generated_email: user.generated_email,
-      generated_password: user.generated_password
-    })) as Caregiver[];
-
-    return caregivers.sort((a, b) => (a.first_name || '').localeCompare(b.first_name || ''));
+    console.log('🔍 Account.tsx - Fetching caregivers using import');
+    // Use the centralized getCaregivers function
+    const { getCaregivers: getCaregiversService } = await import('@/services/firebase/caregivers');
+    const caregivers = await getCaregiversService();
+    console.log('🔍 Account.tsx - Got caregivers:', caregivers.length);
+    console.log('🔍 Account.tsx - Caregiver emails:', caregivers.map(c => c.email).filter(e => e));
+    return caregivers;
   } catch (error) {
     console.error('Error fetching caregivers:', error);
     throw error;
@@ -106,7 +78,7 @@ const getCaregivers = async (): Promise<Caregiver[]> => {
 
 interface AccountFormData {
   email: string
-  role: 'caregiver' | 'guardian'
+  role: 'caregiver' | 'patient'
   notes: string
   generated_email: string
   generated_password: string
@@ -126,6 +98,39 @@ const Account = () => {
   const [creatingFirebaseAuth, setCreatingFirebaseAuth] = useState(false)
   const [creatingAuthForAccount, setCreatingAuthForAccount] = useState<string | null>(null)
   const { toast } = useToast()
+
+  // Helper functions
+  const getStatusColor = (status: Account['status']) => {
+    switch (status) {
+      case 'active':
+        return 'bg-green-100 text-green-800 border-green-200'
+      case 'pending':
+        return 'bg-yellow-100 text-yellow-800 border-yellow-200'
+      case 'suspended':
+        return 'bg-red-100 text-red-800 border-red-200'
+      default:
+        return 'bg-gray-100 text-gray-800 border-gray-200'
+    }
+  }
+
+  const getRoleIcon = (role: Account['role']) => {
+    return role === 'caregiver' ? (
+      <Heart className="h-4 w-4 text-blue-500" />
+    ) : (
+      <Shield className="h-4 w-4 text-green-500" />
+    )
+  }
+
+  const getAccountDisplayName = (account: Account) => {
+    if (account.role === 'caregiver') {
+      const caregiver = caregivers.find(c => c.email === account.email)
+      return caregiver ? `${caregiver.first_name} ${caregiver.last_name}` : account.email
+    } else {
+      // For patients, find by email (User-centered approach) 
+      const patient = patients.find(p => p.email === account.email)
+      return patient ? `${patient.first_name} ${patient.last_name}` : account.email
+    }
+  }
 
   // Auto-generate credentials functions
   const generateUsername = (name: string, role: string): string => {
@@ -181,14 +186,38 @@ const Account = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        console.log('🔍 Account.tsx: Starting fetchData...');
         setLoading(true)
-        const [caregiversData, patientsData, accountsData] = await Promise.all([
-          getCaregivers(),
-          getPatients(),
-          getAccounts()
-        ])
+        console.log('🔍 Account.tsx: About to call getCaregivers, getPatients, getAccounts...');
+        
+        // Call them one by one to see which one fails
+        console.log('🔍 Account.tsx: Calling getCaregivers()...');
+        let caregiversData;
+        try {
+          caregiversData = await getCaregivers();
+          console.log('🔍 Account.tsx: getCaregivers() completed, result length:', caregiversData.length);
+          console.log('🔍 Account.tsx: getCaregivers() full result:', caregiversData);
+        } catch (caregiverError) {
+          console.error('🔍 Account.tsx: getCaregivers() ERROR:', caregiverError);
+          caregiversData = []; // fallback to empty array
+        }
+        
+        console.log('🔍 Account.tsx: Calling getPatients()...');
+        const patientsData = await getPatients();
+        console.log('🔍 Account.tsx: getPatients() completed');
+        
+        console.log('🔍 Account.tsx: Calling getAccounts()...');
+        const accountsData = await getAccounts();
+        console.log('🔍 Account.tsx: getAccounts() completed');
+        
         setCaregivers(caregiversData)
         setPatients(patientsData)
+        
+        // Debug: Log the data to see what we have
+        console.log('🔍 Account.tsx: Loaded caregivers:', caregiversData);
+        console.log('🔍 Account.tsx: Loaded patients:', patientsData);
+        
+        // Only show explicitly created accounts, no virtual accounts
         setAccounts(accountsData)
       } catch (error) {
         console.error('Error fetching data:', error)
@@ -206,7 +235,7 @@ const Account = () => {
 
   const handleInputChange = (field: keyof AccountFormData, value: any) => {
     if (field === 'role') {
-      const roleName = value === 'caregiver' ? 'caregiver' : 'guardian'
+      const roleName = value === 'caregiver' ? 'caregiver' : 'patient'
       const { generatedEmail, generatedPassword } = generateLoginCredentials(roleName, value)
       setFormData(prev => ({ 
         ...prev, 
@@ -218,7 +247,7 @@ const Account = () => {
     } else if (field === 'email') {
       const isValidEmail = formData.role === 'caregiver' 
         ? caregivers.some(caregiver => caregiver.email === value)
-        : patients.some(patient => patient.guardian_email === value)
+        : patients.some(patient => patient.email === value)
       if (isValidEmail) {
         let personName = 'user';
         if (formData.role === 'caregiver') {
@@ -227,9 +256,9 @@ const Account = () => {
             personName = `${selectedCaregiver.first_name}${selectedCaregiver.last_name}`;
           }
         } else {
-          const selectedPatient = patients.find(patient => patient.guardian_email === value);
+          const selectedPatient = patients.find(patient => patient.email === value);
           if (selectedPatient) {
-            personName = `${selectedPatient.first_name}${selectedPatient.last_name}guardian`;
+            personName = `${selectedPatient.first_name}${selectedPatient.last_name}`;
           }
         }
         const { generatedEmail, generatedPassword } = generateLoginCredentials(personName, formData.role);
@@ -251,7 +280,7 @@ const Account = () => {
 
   const generateLoginCredentials = (name: string, role: string) => {
     const cleanName = name.toLowerCase().replace(/\s+/g, '')
-    const roleType = role === 'caregiver' ? 'caregiver' : 'guardian'
+    const roleType = role === 'caregiver' ? 'caregiver' : 'patient'
     const generatedEmail = `${cleanName}.${roleType}@elderflow.com`
     const generatedPassword = generateTemporaryPassword()
     return { generatedEmail, generatedPassword }
@@ -292,66 +321,129 @@ const Account = () => {
       const verificationToken = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2, '0')).join('');
 
       let userDocId = null;
+      let accountId = null;
+      
       if (formData.role === 'caregiver') {
-        const caregiversRef = collection(db, 'users');
-        const q = query(caregiversRef, where('email', '==', formData.email), where('user_lvl', '==', 'caregiver'));
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          const docRef = doc(db, 'users', snapshot.docs[0].id);
-          await updateDoc(docRef, {
-            generated_email: generatedEmail,
-            generated_password: generatedPassword,
-            auth_created: false,
-            status: 'pending',
-            verification_token: verificationToken,
-            verified: false,
-            updated_at: serverTimestamp(),
-          });
-          userDocId = snapshot.docs[0].id;
-        } else {
-          const newAccountRef = await createAccount({
-            email: formData.email,
-            generated_email: generatedEmail,
-            generated_password: generatedPassword,
-            name: 'Caregiver Account',
-            role: 'caregiver',
-            status: 'pending',
-            verified: false,
-            password_changed: false,
-            verification_token: verificationToken
-          });
-          userDocId = newAccountRef;
-        }
-      } else {
-        const newAccountRef = await createAccount({
+        // Find the caregiver by email to get their real name
+        const selectedCaregiver = caregivers.find(c => c.email === formData.email);
+        const caregiverName = selectedCaregiver 
+          ? `${selectedCaregiver.first_name} ${selectedCaregiver.last_name}`.trim()
+          : 'Caregiver Account';
+        
+        // Create account in accounts collection
+        accountId = await createAccount({
           email: formData.email,
           generated_email: generatedEmail,
           generated_password: generatedPassword,
-          name: 'Guardian Account',
-          role: 'guardian',
+          name: caregiverName,
+          role: 'caregiver',
           status: 'pending',
           verified: false,
           password_changed: false,
           verification_token: verificationToken
         });
-        userDocId = newAccountRef;
+
+        // Find existing user record and update it with accountId
+        if (selectedCaregiver) {
+          const usersRef = collection(db, 'users');
+          const q = query(usersRef, where('email', '==', formData.email));
+          const snapshot = await getDocs(q);
+          
+          if (!snapshot.empty) {
+            const userDocRef = doc(db, 'users', snapshot.docs[0].id);
+            await updateDoc(userDocRef, {
+              accountId: accountId,
+              generated_email: generatedEmail,
+              generated_password: generatedPassword,
+              auth_created: false,
+              verification_token: verificationToken,
+              verified: false,
+              updated_at: serverTimestamp(),
+            });
+            userDocId = snapshot.docs[0].id;
+            console.log(`✅ Updated existing user ${userDocId} with accountId: ${accountId}`);
+          } else {
+            console.warn(`⚠️ No existing user found for caregiver email: ${formData.email}`);
+          }
+        }
+      } else {
+        // Find the patient by email to get their real name
+        const selectedPatient = patients.find(p => p.email === formData.email);
+        const patientName = selectedPatient 
+          ? `${selectedPatient.first_name} ${selectedPatient.last_name}`.trim()
+          : 'Patient Account';
+        
+        // Create account in accounts collection
+        accountId = await createAccount({
+          email: formData.email,
+          generated_email: generatedEmail,
+          generated_password: generatedPassword,
+          name: patientName,
+          role: 'patient',
+          status: 'pending',
+          verified: false,
+          password_changed: false,
+          verification_token: verificationToken
+        });
+
+        // Find existing patient/user record and update it with accountId
+        if (selectedPatient) {
+          const usersRef = collection(db, 'users');
+          const q = query(usersRef, where('email', '==', formData.email));
+          const snapshot = await getDocs(q);
+          
+          if (!snapshot.empty) {
+            const userDocRef = doc(db, 'users', snapshot.docs[0].id);
+            await updateDoc(userDocRef, {
+              accountId: accountId,
+              generated_email: generatedEmail,
+              generated_password: generatedPassword,
+              auth_created: false,
+              verification_token: verificationToken,
+              verified: false,
+              updated_at: serverTimestamp(),
+            });
+            userDocId = snapshot.docs[0].id;
+            console.log(`✅ Updated existing user ${userDocId} with accountId: ${accountId}`);
+          } else {
+            console.warn(`⚠️ No existing user found for patient email: ${formData.email}`);
+          }
+        }
       }
 
+      // Use the accountId for further processing
+      userDocId = accountId;
+
+      // Prefer token and generated_email from the accounts collection if available
       let actualEmail = generatedEmail;
       let actualToken = verificationToken;
       if (userDocId) {
-        const userDocSnap = await getDoc(doc(db, 'users', userDocId));
-        if (userDocSnap.exists()) {
-          const userData = userDocSnap.data();
-          if (userData.generated_email) actualEmail = userData.generated_email;
-          if (userData.verification_token) actualToken = userData.verification_token;
+        // Try reading accounts collection doc first (createAccount returns accounts doc id)
+        try {
+          const accountDocRef = doc(db, 'accounts', userDocId)
+          const accountSnap = await getDoc(accountDocRef)
+          if (accountSnap.exists()) {
+            const accountData = accountSnap.data()
+            if (accountData.generated_email) actualEmail = accountData.generated_email
+            if (accountData.verification_token) actualToken = accountData.verification_token
+          } else {
+            // Fallback to users collection doc
+            const userDocSnap = await getDoc(doc(db, 'users', userDocId))
+            if (userDocSnap.exists()) {
+              const userData = userDocSnap.data()
+              if (userData.generated_email) actualEmail = userData.generated_email
+              if (userData.verification_token) actualToken = userData.verification_token
+            }
+          }
+        } catch (e) {
+          console.warn('Could not read account/user doc to fetch verification token:', e)
         }
       }
 
       const verificationUrl = `${window.location.origin}/verify-account?token=${actualToken}&email=${encodeURIComponent(actualEmail)}`;
       await sendAccountCreationEmail({
         to_email: formData.email,
-        to_name: formData.role === 'caregiver' ? 'Caregiver' : 'Guardian',
+        to_name: formData.role === 'caregiver' ? 'Caregiver' : 'Patient',
         account_type: formData.role,
         username: actualEmail,
         temporary_password: generatedPassword,
@@ -361,6 +453,8 @@ const Account = () => {
         admin_notes: formData.notes || `Welcome to ElderFlow Care! Your login email is: ${actualEmail}`
       });
 
+      // Account will remain unverified until user clicks verification link in email
+
       const updatedAccounts = await getAccounts();
       setAccounts(updatedAccounts);
       resetForm();
@@ -368,7 +462,7 @@ const Account = () => {
 
       toast({
         title: "Account Created Successfully",
-        description: `Login credentials sent to ${formData.email}. Login email: ${actualEmail}`,
+        description: `Account created and verification email sent to ${formData.email}. Please check email to verify account. Login email: ${actualEmail}`,
       });
     } catch (error) {
       console.error("Error creating account:", error);
@@ -452,6 +546,25 @@ const Account = () => {
     }
   }
 
+  const handleDeleteSpecificUser = async () => {
+    try {
+      const userId = "bMnzyBvAXcg6ZsekHOSr";
+      await deleteUser(userId);
+      toast({
+        title: "User Deleted",
+        description: `Successfully deleted user with ID: ${userId}`,
+        variant: "default"
+      });
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      toast({
+        title: "Error",
+        description: "Failed to delete user. Please try again.",
+        variant: "destructive"
+      });
+    }
+  }
+
   // --- END OF ALL HANDLER/HELPER FUNCTIONS ---
 
   // MAIN RETURN for Account component (must be at top level of Account function)
@@ -460,7 +573,7 @@ const Account = () => {
     account.role.toLowerCase().includes(searchTerm.toLowerCase())
   );
   const caregiverAccounts = filteredAccounts.filter(acc => acc.role === 'caregiver');
-  const guardianAccounts = filteredAccounts.filter(acc => acc.role === 'guardian');
+  const patientAccounts = filteredAccounts.filter(acc => acc.role === 'patient');
 
   if (loading) {
     return (
@@ -477,7 +590,7 @@ const Account = () => {
         <div className="space-y-1">
           <h1 className="text-5xl font-bold text-gray-900">Account Management</h1>
           <p className="text-xl text-muted-foreground">
-            Create and manage accounts for caregivers and patient guardians
+            Create and manage accounts for caregivers and patients
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -502,6 +615,40 @@ const Account = () => {
           <Button onClick={() => setIsCreateDialogOpen(true)} className="gap-2 h-12 text-base">
             <UserPlus className="h-5 w-5" />
             <span className="text-base">Create Account</span>
+          </Button>
+          {/* Temporary Migration Button - Remove after running once */}
+          <Button 
+            onClick={async () => {
+              const result = await migrateGuardianToPatient();
+              if (result.success) {
+                toast({
+                  title: "Migration Successful",
+                  description: `Updated ${result.updatedCount} accounts from 'guardian' to 'patient' role.`,
+                });
+                // Refresh the accounts list
+                window.location.reload();
+              } else {
+                toast({
+                  title: "Migration Failed",
+                  description: "Please check the console for errors.",
+                  variant: "destructive"
+                });
+              }
+            }}
+            variant="outline" 
+            className="gap-2 h-12 text-base"
+          >
+            <Settings className="h-5 w-5" />
+            <span className="text-base">Migrate Guardian→Patient</span>
+          </Button>
+          {/* Temporary Delete User Button - Remove after running once */}
+          <Button 
+            onClick={handleDeleteSpecificUser}
+            variant="destructive" 
+            className="gap-2 h-12 text-base"
+          >
+            <Trash2 className="h-5 w-5" />
+            <span className="text-base">Delete User bMnz...</span>
           </Button>
         </div>
       </div>
@@ -532,7 +679,7 @@ const Account = () => {
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="all">All Accounts ({accounts.length})</TabsTrigger>
           <TabsTrigger value="caregivers">Caregivers ({caregiverAccounts.length})</TabsTrigger>
-          <TabsTrigger value="guardians">Guardians ({guardianAccounts.length})</TabsTrigger>
+          <TabsTrigger value="guardians">Patients ({patientAccounts.length})</TabsTrigger>
           <TabsTrigger value="pending">Pending ({accounts.filter(a => a.status === 'pending').length})</TabsTrigger>
         </TabsList>
 
@@ -545,6 +692,9 @@ const Account = () => {
             onSuspendAccount={setSuspendingAccount}
             onCreateFirebaseAuth={handleCreateFirebaseAuthForAccount}
             creatingAuthForAccount={creatingAuthForAccount}
+            getStatusColor={getStatusColor}
+            getRoleIcon={getRoleIcon}
+            getAccountDisplayName={getAccountDisplayName}
           />
         </TabsContent>
 
@@ -557,18 +707,24 @@ const Account = () => {
             onSuspendAccount={setSuspendingAccount}
             onCreateFirebaseAuth={handleCreateFirebaseAuthForAccount}
             creatingAuthForAccount={creatingAuthForAccount}
+            getStatusColor={getStatusColor}
+            getRoleIcon={getRoleIcon}
+            getAccountDisplayName={getAccountDisplayName}
           />
         </TabsContent>
 
         <TabsContent value="guardians">
           <AccountList 
-            accounts={guardianAccounts} 
+            accounts={patientAccounts} 
             caregivers={caregivers}
             patients={patients}
             onViewAccount={setViewingAccount} 
             onSuspendAccount={setSuspendingAccount}
             onCreateFirebaseAuth={handleCreateFirebaseAuthForAccount}
             creatingAuthForAccount={creatingAuthForAccount}
+            getStatusColor={getStatusColor}
+            getRoleIcon={getRoleIcon}
+            getAccountDisplayName={getAccountDisplayName}
           />
         </TabsContent>
 
@@ -581,6 +737,9 @@ const Account = () => {
             onSuspendAccount={setSuspendingAccount}
             onCreateFirebaseAuth={handleCreateFirebaseAuthForAccount}
             creatingAuthForAccount={creatingAuthForAccount}
+            getStatusColor={getStatusColor}
+            getRoleIcon={getRoleIcon}
+            getAccountDisplayName={getAccountDisplayName}
           />
         </TabsContent>
       </Tabs>
@@ -591,7 +750,7 @@ const Account = () => {
           <DialogHeader>
             <DialogTitle>Create New Account</DialogTitle>
             <DialogDescription>
-              Create a new account for a caregiver or patient guardian. An email with login credentials will be sent automatically.
+              Create a new account for a caregiver or patient. An email with login credentials will be sent automatically.
             </DialogDescription>
           </DialogHeader>
           
@@ -616,10 +775,10 @@ const Account = () => {
                         <span className="text-base">Caregiver</span>
                       </div>
                     </SelectItem>
-                    <SelectItem value="guardian" className="text-base">
+                    <SelectItem value="patient" className="text-base">
                       <div className="flex items-center gap-2">
                         <Shield className="h-5 w-5 text-green-500" />
-                        <span className="text-base">Patient Guardian</span>
+                        <span className="text-base">Patient</span>
                       </div>
                     </SelectItem>
                   </SelectContent>
@@ -633,27 +792,47 @@ const Account = () => {
                   onValueChange={(value) => handleInputChange("email", value)}
                 >
                   <SelectTrigger className="h-12 text-base">
-                    <SelectValue placeholder={`Select ${formData.role} email`} />
+                    <SelectValue placeholder={`Select ${formData.role === 'caregiver' ? 'caregiver' : 'patient'} email`} />
                   </SelectTrigger>
                   <SelectContent>
-                    {formData.role === 'caregiver' && caregivers
-                      .filter(caregiver => caregiver.email && caregiver.email.trim() !== '') // Filter out empty emails
-                      .filter((caregiver, index, arr) => 
-                        arr.findIndex(c => c.email === caregiver.email) === index) // Remove duplicates
-                      .map((caregiver) => (
+                    {formData.role === 'caregiver' && (() => {
+                      console.log('🔍 DROPDOWN DEBUG - Total caregivers:', caregivers.length);
+                      console.log('🔍 DROPDOWN DEBUG - Caregivers data:', caregivers);
+                      const filteredCaregivers = caregivers
+                        .filter(caregiver => {
+                          console.log('🔍 DROPDOWN DEBUG - Checking caregiver:', {
+                            name: `${caregiver.first_name} ${caregiver.last_name}`,
+                            email: caregiver.email,
+                            hasEmail: !!caregiver.email,
+                            emailTrimmed: caregiver.email?.trim(),
+                            allFields: Object.keys(caregiver)
+                          });
+                          return caregiver.email && caregiver.email.trim() !== '';
+                        })
+                        .filter((caregiver, index, arr) => 
+                          arr.findIndex(c => c.email === caregiver.email) === index);
+                      console.log('🔍 DROPDOWN DEBUG - Filtered caregivers:', filteredCaregivers);
+                      return filteredCaregivers.map((caregiver) => (
                         <SelectItem key={`caregiver-${caregiver.caregiver_id}`} value={caregiver.email} className="text-base">
                           {caregiver.email} - {caregiver.first_name} {caregiver.last_name}
                         </SelectItem>
-                      ))}
-                    {formData.role === 'guardian' && patients
-                      .filter(patient => patient.guardian_email && patient.guardian_email.trim() !== '') // Use guardian_email and filter out empty
-                      .filter((patient, index, arr) => 
-                        arr.findIndex(p => p.guardian_email === patient.guardian_email) === index) // Remove duplicates
-                      .map((patient) => (
-                        <SelectItem key={`guardian-${patient.patient_id}`} value={patient.guardian_email!} className="text-base">
-                          {patient.guardian_email} - {patient.first_name} {patient.last_name} (Guardian)
+                      ));
+                    })()}
+                    {formData.role === 'patient' && (() => {
+                      const filteredPatients = patients
+                        .filter(patient => {
+                          console.log('Patient:', patient.first_name, patient.last_name, 'Email:', patient.email);
+                          return patient.email && patient.email.trim() !== '';
+                        })
+                        .filter((patient, index, arr) => 
+                          arr.findIndex(p => p.email === patient.email) === index);
+                      console.log('Filtered patients for dropdown:', filteredPatients);
+                      return filteredPatients.map((patient) => (
+                        <SelectItem key={`patient-${patient.patient_id}`} value={patient.email} className="text-base">
+                          {patient.email} - {patient.first_name} {patient.last_name} (Patient)
                         </SelectItem>
-                      ))}
+                      ));
+                    })()}
                   </SelectContent>
                 </Select>
                 <p className="text-base text-muted-foreground">
@@ -837,7 +1016,10 @@ const AccountList = ({
   onViewAccount, 
   onSuspendAccount,
   onCreateFirebaseAuth,
-  creatingAuthForAccount
+  creatingAuthForAccount,
+  getStatusColor,
+  getRoleIcon,
+  getAccountDisplayName
 }: {
   accounts: Account[]
   caregivers: Caregiver[]
@@ -846,38 +1028,10 @@ const AccountList = ({
   onSuspendAccount: (id: string) => void
   onCreateFirebaseAuth: (accountId: string) => void
   creatingAuthForAccount: string | null
+  getStatusColor: (status: Account['status']) => string
+  getRoleIcon: (role: Account['role']) => JSX.Element
+  getAccountDisplayName: (account: Account) => string
 }) => {
-  const getStatusColor = (status: Account['status']) => {
-    switch (status) {
-      case 'active':
-        return 'bg-green-100 text-green-800 border-green-200'
-      case 'pending':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200'
-      case 'suspended':
-        return 'bg-red-100 text-red-800 border-red-200'
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200'
-    }
-  }
-
-  const getRoleIcon = (role: Account['role']) => {
-    return role === 'caregiver' ? (
-      <Heart className="h-4 w-4 text-blue-500" />
-    ) : (
-      <Shield className="h-4 w-4 text-green-500" />
-    )
-  }
-
-  const getAccountDisplayName = (account: Account) => {
-    if (account.role === 'caregiver') {
-      const caregiver = caregivers.find(c => c.email === account.email)
-      return caregiver ? `${caregiver.first_name} ${caregiver.last_name}` : account.email
-    } else {
-      const patient = patients.find(p => p.guardian_email === account.email)
-      return patient ? `Guardian of ${patient.first_name} ${patient.last_name}` : account.email
-    }
-  }
-
   if (accounts.length === 0) {
     return (
       <Card>
@@ -931,7 +1085,7 @@ const AccountList = ({
                       )}
                     </Badge>
                     <span className="text-xs text-muted-foreground font-medium">
-                      {account.role === 'caregiver' ? 'Caregiver Account' : 'Guardian Account'}
+                      {account.name || (account.role === 'caregiver' ? 'Caregiver Account' : 'Guardian Account')}
                     </span>
                   </div>
                 </div>

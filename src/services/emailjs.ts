@@ -62,7 +62,7 @@ export const validateEmailJSConfig = (): { isValid: boolean; errors: string[] } 
 interface AccountCreationEmailData {
   to_email: string
   to_name: string
-  account_type: 'caregiver' | 'guardian'
+  account_type: 'caregiver' | 'patient'
   temporary_password: string
   login_url: string
   verification_url?: string

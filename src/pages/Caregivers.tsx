@@ -45,11 +45,9 @@ import {
   getAvailablePatientSlots,
   CAREGIVER_PATIENT_LIMITS 
 } from "@/types"
-import { updateCaregiver, deleteCaregiver, syncAllCaregiverPatientCounts, fixCaregiverFields, uploadCaregiverLicense, uploadCaregiverLicenseAsBase64 } from "@/services/firebase/caregivers"
-import { collection, addDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore'
-import { createUserWithEmailAndPassword } from 'firebase/auth'
-import { auth, db } from '@/lib/firebase'
-import { COLLECTIONS } from '@/services/firebase/collections'
+import { addCaregiver, getCaregivers, updateCaregiver, deleteCaregiver, syncAllCaregiverPatientCounts, fixCaregiverFields, uploadCaregiverLicense, uploadCaregiverLicenseAsBase64 } from "@/services/firebase/caregivers"
+import { collection, getDocs, query, where } from 'firebase/firestore'
+import { db } from '@/lib/firebase'
 import { getPatients, updatePatient, getPatientsByCaregiver } from "@/services/firebase/patients"
 import { getCaregiverTodayShifts, testCaregiverShiftIndex } from "@/services/firebase/caregiverShifts"
 import { addressService, Province, CityMunicipality, Barangay } from "@/services/address"
@@ -65,199 +63,6 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import FileUpload from "@/components/ui/file-upload"    // Add FileUpload import
-
-// Helper function to get caregivers from users collection
-const getCaregivers = async () => {
-  try {
-    const q = query(collection(db, 'users'), where('user_lvl', '==', 'caregiver'));
-    const querySnapshot = await getDocs(q);
-    const caregiverUsers = querySnapshot.docs.map(doc => doc.data());
-    
-    // Convert User objects to Caregiver-compatible objects
-    return caregiverUsers.map(user => ({
-      caregiver_id: user.uid,
-      user_id: user.uid,
-      first_name: user.first_name,
-      last_name: user.last_name,
-      middle_name: user.middle_name,
-      birthday: user.date_of_birth || user.birthday,
-      email: user.email,
-      contact_number: user.contact_number || (user.phone ? parseInt(user.phone) : 0),
-      address: user.address,
-      shift_type: user.shift_type || 'Day',
-      shift_start_date: user.shift_start_date,
-      shift_end_date: user.shift_end_date,
-      role: user.role || 'Eldercare',
-      hire_date: user.hire_date || new Date().toISOString(),
-      status: user.status || 'Active',
-      assigned_patients_count: user.assigned_patients_count || 0,
-      max_patients: user.max_patients || 2,
-      license_number: user.license_number || '',
-      license_picture: user.license_image_base64 || user.license_picture || '',
-      contract_start_date: user.contract_start_date,
-      contract_end_date: user.contract_end_date,
-      specialization: user.specializations?.join(', '),
-      temporary_schedule_reason: user.temporary_schedule_reason,
-      original_shift_type: user.original_shift_type,
-      original_shift_start_date: user.original_shift_start_date,
-      original_shift_end_date: user.original_shift_end_date,
-      created_at: user.created_at,
-      updated_at: user.updated_at
-    }));
-  } catch (error) {
-    console.error('Error fetching caregivers from users collection:', error);
-    throw error;
-  }
-};
-
-// Helper function to add caregiver to users collection
-const addCaregiverToUsers = async (caregiverData: any): Promise<string> => {
-  try {
-    // Generate email if not provided
-    const email = caregiverData.email || `${caregiverData.first_name.toLowerCase()}.${caregiverData.last_name.toLowerCase()}@elderflow.care`;
-    
-    // Check if email already exists in users collection
-    const existingUserQuery = query(collection(db, 'users'), where('email', '==', email));
-    const existingUserSnapshot = await getDocs(existingUserQuery);
-    
-    if (!existingUserSnapshot.empty) {
-      throw new Error(`A user with email ${email} already exists. Please use a different email.`);
-    }
-    
-    // Generate a temporary password
-    const generateTempPassword = (): string => {
-      const length = 12;
-      const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
-      let password = '';
-      for (let i = 0; i < length; i++) {
-        password += charset.charAt(Math.floor(Math.random() * charset.length));
-      }
-      return password;
-    };
-    
-    const tempPassword = generateTempPassword();
-    
-    // Create Firebase Auth user
-    const userCredential = await createUserWithEmailAndPassword(auth, email, tempPassword);
-    const uid = userCredential.user.uid;
-    
-    // Create user document in Firestore with all caregiver data
-    const userData = {
-      uid,
-      email,
-      role: 'caregiver',
-      user_lvl: 'caregiver',
-      first_name: caregiverData.first_name,
-      last_name: caregiverData.last_name,
-      middle_name: caregiverData.middle_name,
-      birthday: caregiverData.birthday,
-      phone: caregiverData.contact_number?.toString(),
-      contact_number: caregiverData.contact_number,
-      address: caregiverData.address,
-      shift_type: caregiverData.shift_type,
-      shift_start_date: caregiverData.shift_start_date,
-      shift_end_date: caregiverData.shift_end_date,
-      hire_date: caregiverData.hire_date || new Date().toISOString(),
-      status: 'Active',
-      assigned_patients_count: 0,
-      max_patients: caregiverData.shift_type === 'Day' ? 2 : 4,
-      license_number: caregiverData.license_number,
-      contract_start_date: caregiverData.contract_start_date,
-      contract_end_date: caregiverData.contract_end_date,
-      created_at: serverTimestamp(),
-      updated_at: serverTimestamp(),
-      is_active: true
-    };
-    
-    // Add user document to Firestore
-    await addDoc(collection(db, 'users'), userData);
-    
-    console.log(`✅ Successfully created caregiver user account for ${caregiverData.first_name} ${caregiverData.last_name}:`);
-    console.log(`📧 Email: ${email}`);
-    console.log(`🔑 Temporary Password: ${tempPassword}`);
-    console.log('⚠️ Share this temporary password with the caregiver for initial login');
-    
-    // Create initial shift records if schedule dates are provided
-    if (caregiverData.shift_start_date && caregiverData.shift_end_date) {
-      try {
-        await createInitialShiftRecords(
-          uid, // Use user UID as caregiver ID
-          caregiverData.shift_type, 
-          caregiverData.shift_start_date, 
-          caregiverData.shift_end_date
-        );
-        console.log('✅ Successfully created initial shift records for new caregiver');
-      } catch (shiftError) {
-        console.error('Failed to create initial shift records:', shiftError);
-        // Don't throw error here - caregiver is already created successfully
-      }
-    } else {
-      console.log('ℹ️ No schedule dates provided, skipping initial shift creation');
-    }
-    
-    return uid;
-  } catch (error: any) {
-    console.error('Error adding caregiver to users collection:', error);
-    
-    // Provide more specific error messages
-    if (error.code === 'auth/email-already-in-use') {
-      throw new Error(`The email address is already in use by another account. Please use a different email.`);
-    } else if (error.code === 'auth/invalid-email') {
-      throw new Error(`The email address is not valid. Please enter a valid email address.`);
-    } else if (error.code === 'auth/weak-password') {
-      throw new Error(`The password is too weak. Please use a stronger password.`);
-    } else {
-      throw error;
-    }
-  }
-};
-
-// Helper function to create initial shift records for a caregiver
-const createInitialShiftRecords = async (caregiverId: string, shiftType: 'Day' | 'Night', startDate: Timestamp, endDate: Timestamp): Promise<void> => {
-  try {
-    console.log(`Creating initial shift records for caregiver ${caregiverId}`);
-    
-    // Determine shift times based on shift type
-    const { startTimeStr, endTimeStr } = shiftType === 'Day' 
-      ? { startTimeStr: '07:00', endTimeStr: '19:00' }
-      : { startTimeStr: '19:00', endTimeStr: '07:00' };
-    
-    // Helper function to convert time string to Timestamp with a specific date
-    const timeToTimestamp = (timeString: string, date: Date): Timestamp => {
-      const [hours, minutes] = timeString.split(':').map(Number);
-      const timeDate = new Date(date);
-      timeDate.setHours(hours, minutes, 0, 0);
-      return Timestamp.fromDate(timeDate);
-    };
-    
-    const startDateObj = startDate.toDate();
-    const endDateObj = endDate.toDate();
-    const shiftRecords: Promise<string>[] = [];
-    
-    // Create shift records for each day in the range
-    for (let date = new Date(startDateObj); date <= endDateObj; date.setDate(date.getDate() + 1)) {
-      const shiftData = {
-        caregiver_id: caregiverId,
-        shift_date: Timestamp.fromDate(new Date(date)),
-        shift_type: shiftType,
-        start_time: timeToTimestamp(startTimeStr, date),
-        end_time: timeToTimestamp(endTimeStr, date),
-        notes: "Initial schedule assignment",
-        created_at: Timestamp.now(),
-        updated_at: Timestamp.now()
-      };
-      
-      shiftRecords.push(addDoc(collection(db, COLLECTIONS.CAREGIVER_SHIFTS), shiftData).then(doc => doc.id));
-    }
-    
-    // Wait for all shift records to be created
-    await Promise.all(shiftRecords);
-    console.log(`Successfully created ${shiftRecords.length} shift records for caregiver ${caregiverId}`);
-  } catch (error) {
-    console.error('Error creating initial shift records:', error);
-    throw error;
-  }
-};
 
 const Caregivers = () => {
   const [caregivers, setCaregivers] = useState<Caregiver[]>([])
@@ -746,8 +551,61 @@ const Caregivers = () => {
         contract_end_date: formData.contract_end_date
       }
 
-      // First, create the caregiver in users collection to get a real ID
-      const caregiverId = await addCaregiverToUsers(newCaregiverData)
+      // Helper function to safely create Timestamps
+      const safeTimestamp = (dateValue: any): Timestamp | undefined => {
+        if (!dateValue) return undefined;
+        
+        try {
+          // If it's already a Timestamp, return it
+          if (dateValue instanceof Timestamp) {
+            return dateValue;
+          }
+          
+          // If it's a string, try to parse it
+          if (typeof dateValue === 'string') {
+            if (dateValue.trim() === '') return undefined;
+            const date = new Date(dateValue);
+            if (isNaN(date.getTime())) {
+              console.warn('Invalid date string:', dateValue);
+              return undefined;
+            }
+            return Timestamp.fromDate(date);
+          }
+          
+          // If it's already a Date object
+          if (dateValue instanceof Date) {
+            if (isNaN(dateValue.getTime())) {
+              console.warn('Invalid Date object:', dateValue);
+              return undefined;
+            }
+            return Timestamp.fromDate(dateValue);
+          }
+          
+          console.warn('Unknown date format:', dateValue, typeof dateValue);
+          return undefined;
+        } catch (error) {
+          console.warn('Error creating timestamp for:', dateValue, error);
+          return undefined;
+        }
+      };
+
+      // Create the caregiver using the caregivers service
+      const caregiverId = await addCaregiver({
+        first_name: newCaregiverData.first_name,
+        last_name: newCaregiverData.last_name,
+        middle_name: newCaregiverData.middle_name,
+        birthday: newCaregiverData.birthday,
+        email: newCaregiverData.email,
+        contact_number: newCaregiverData.contact_number,
+        address: newCaregiverData.address,
+        shift_type: newCaregiverData.shift_type,
+        shift_start_date: safeTimestamp(newCaregiverData.shift_start_date),
+        shift_end_date: safeTimestamp(newCaregiverData.shift_end_date),
+        role: newCaregiverData.role,
+        license_number: newCaregiverData.license_number,
+        contract_start_date: newCaregiverData.contract_start_date,
+        contract_end_date: newCaregiverData.contract_end_date
+      });
 
       // If a license file is selected, upload it using the real caregiver ID
       if (licenseFile && caregiverId) {
@@ -824,7 +682,8 @@ const Caregivers = () => {
       
       toast({
         title: "Success",
-        description: `Eldercare ${formData.first_name} ${formData.last_name} has been added successfully.`
+        description: `Eldercare ${formData.first_name} ${formData.last_name} has been added successfully! Check the console for login credentials and any email notifications.`,
+        duration: 6000
       })
       
     } catch (error) {
@@ -1662,9 +1521,9 @@ const Caregivers = () => {
   }
 
   const filteredCaregivers = caregivers.filter(caregiver =>
-    caregiver.first_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    caregiver.last_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    caregiver.email.toLowerCase().includes(searchTerm.toLowerCase())
+    (caregiver.first_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (caregiver.last_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (caregiver.email || '').toLowerCase().includes(searchTerm.toLowerCase())
   )
 
   const getShiftColor = (shiftType: string) => {
