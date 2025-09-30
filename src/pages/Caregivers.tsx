@@ -14,12 +14,16 @@ import {
   FileText,    // Add FileText import
   Download,    // Add Download import
   ExternalLink, // Add ExternalLink import
-  Calendar     // Add Calendar import
+  Calendar,     // Add Calendar import
+  Info,        // Add Info import
+  ChevronDown,  // Add ChevronDown import
+  RefreshCw     // Add RefreshCw import
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { 
   Dialog,
   DialogContent,
@@ -45,7 +49,7 @@ import {
   getAvailablePatientSlots,
   CAREGIVER_PATIENT_LIMITS 
 } from "@/types"
-import { addCaregiver, getCaregivers, updateCaregiver, deleteCaregiver, syncAllCaregiverPatientCounts, fixCaregiverFields, uploadCaregiverLicense, uploadCaregiverLicenseAsBase64 } from "@/services/firebase/caregivers"
+import { addCaregiver, getCaregivers, updateCaregiver, deleteCaregiver, syncAllCaregiverPatientCounts, fixCaregiverFields, uploadCaregiverLicense, uploadCaregiverLicenseAsBase64, debugPatientAssignments, forceSyncCaregiverPatientCount } from "@/services/firebase/caregivers"
 import { collection, getDocs, query, where } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { getPatients, updatePatient, getPatientsByCaregiver } from "@/services/firebase/patients"
@@ -127,6 +131,40 @@ const Caregivers = () => {
     return licenseUrl.startsWith('data:image/') || licenseUrl.startsWith('http');
   };
 
+  // Helper function to format address into readable string
+  const formatAddress = (address: any): string => {
+    if (!address) return "Not provided";
+    
+    let addressObj = null;
+    
+    // Handle different address formats
+    if (typeof address === 'string') {
+      try {
+        // Try to parse as JSON first
+        addressObj = JSON.parse(address);
+      } catch {
+        // If it's not JSON, treat as plain string
+        return address;
+      }
+    } else if (typeof address === 'object') {
+      addressObj = address;
+    }
+    
+    // Format the address object into readable string
+    if (addressObj && typeof addressObj === 'object') {
+      const parts = [
+        addressObj.street,
+        addressObj.barangay,
+        addressObj.city_municipality,
+        addressObj.province
+      ].filter(part => part && part.trim() !== '');
+      
+      return parts.length > 0 ? parts.join(', ') : "No address specified";
+    }
+    
+    return "Invalid address format";
+  };
+
   // Helper function to get file extension from license URL
   const getLicenseFileExtension = (licenseUrl: string): string => {
     if (licenseUrl.startsWith('data:image/')) {
@@ -139,6 +177,7 @@ const Caregivers = () => {
   // Load assigned patients for a caregiver
   const loadAssignedPatients = async (caregiverId: string) => {
     try {
+      console.log(`🔄 [loadAssignedPatients] Starting to load patients for caregiver: ${caregiverId}`);
       setLoadingPatients(true)
       setAssignedPatients([]) // Clear previous data
       
@@ -148,6 +187,7 @@ const Caregivers = () => {
       }
       
       const patients = await getPatientsByCaregiver(caregiverId)
+      console.log(`🔄 [loadAssignedPatients] Received ${patients.length} patients:`, patients);
       setAssignedPatients(patients)
     } catch (error) {
       console.error("Error loading assigned patients:", error)
@@ -285,54 +325,29 @@ const Caregivers = () => {
         // Check availability for all caregivers
         await checkCaregiverAvailability(caregiversData)
         
-        // Optional: Auto-sync patient counts if any caregivers have undefined counts
-        const needsSync = caregiversData.some(c => 
-          typeof c.assigned_patients_count !== 'number' || 
-          c.assigned_patients_count < 0 ||
-          typeof c.max_patients !== 'number'
-        );
-        
-        if (needsSync) {
-          console.log('Auto-syncing patient counts for caregivers with missing data...');
-          try {
-            await fixCaregiverFields();
-            await syncAllCaregiverPatientCounts();
-            // Reload data after sync
-            const updatedCaregivers = await getCaregivers();
-            setCaregivers(updatedCaregivers);
-            // Re-check availability after reload
-            await checkCaregiverAvailability(updatedCaregivers);
-            
-            // After syncing, check for capacity violations and auto-fix
-            console.log('Checking for capacity violations after sync...');
-            const capacityResult = await checkAndFixAllCaregiverCapacities();
-            if (capacityResult.fixed > 0) {
-              console.log(`Auto-fixed ${capacityResult.fixed} patient assignments`);
-              // Reload data again after fixing capacities
-              const finalCaregivers = await getCaregivers();
-              setCaregivers(finalCaregivers);
-              await checkCaregiverAvailability(finalCaregivers);
-            }
-          } catch (syncError) {
-            console.error('Auto-sync failed:', syncError);
-            // Don't show error to user for auto-sync failure
+        // Always sync patient counts on page load to ensure accuracy
+        console.log('Auto-syncing patient counts to ensure accuracy...');
+        try {
+          await syncAllCaregiverPatientCounts();
+          // Reload data after sync
+          const updatedCaregivers = await getCaregivers();
+          setCaregivers(updatedCaregivers);
+          // Re-check availability after reload
+          await checkCaregiverAvailability(updatedCaregivers);
+          
+          // After syncing, check for capacity violations and auto-fix
+          console.log('Checking for capacity violations after sync...');
+          const capacityResult = await checkAndFixAllCaregiverCapacities();
+          if (capacityResult.fixed > 0) {
+            console.log(`Auto-fixed ${capacityResult.fixed} patient assignments`);
+            // Reload data again after fixing capacities
+            const finalCaregivers = await getCaregivers();
+            setCaregivers(finalCaregivers);
+            await checkCaregiverAvailability(finalCaregivers);
           }
-        } else {
-          // Even if no sync is needed, check for capacity violations
-          console.log('Checking for capacity violations...');
-          try {
-            const capacityResult = await checkAndFixAllCaregiverCapacities();
-            if (capacityResult.fixed > 0) {
-              console.log(`Auto-fixed ${capacityResult.fixed} patient assignments`);
-              // Reload data after fixing capacities
-              const updatedCaregivers = await getCaregivers();
-              setCaregivers(updatedCaregivers);
-              await checkCaregiverAvailability(updatedCaregivers);
-            }
-          } catch (capacityError) {
-            console.error('Capacity check failed:', capacityError);
-            // Don't show error to user for auto-check failure
-          }
+        } catch (syncError) {
+          console.error('Auto-sync failed:', syncError);
+          // Don't show error to user for auto-sync failure
         }
       } catch (error) {
         console.error("Error loading data:", error)
@@ -1585,154 +1600,11 @@ const Caregivers = () => {
           <p className="text-xl text-muted-foreground">Manage eldercare profiles and schedules</p>
         </div>
         <div className="flex gap-2">
-          <Button
-            onClick={async () => {
-              try {
-                setSyncingCounts(true)
-                
-                console.log('🔧 Fixing missing status fields for all caregivers...')
-                
-                // First fix any missing fields (including status)
-                await fixCaregiverFields()
-                
-                // Then update status based on shift dates
-                const statusUpdated = await updateCaregiverStatusByDates()
-                
-                // Finally sync patient counts
-                await syncAllCaregiverPatientCounts()
-                
-                // Refresh caregivers list
-                const updatedCaregivers = await getCaregivers()
-                setCaregivers(updatedCaregivers)
-                
-                toast({
-                  title: "Status Fix Complete",
-                  description: `Fixed missing status fields and updated ${statusUpdated} caregiver statuses based on shift dates.`,
-                })
-              } catch (error) {
-                console.error("Error fixing status:", error)
-                toast({
-                  title: "Error",
-                  description: "Failed to fix caregiver status. Please try again.",
-                  variant: "destructive"
-                })
-              } finally {
-                setSyncingCounts(false)
-              }
-            }}
-            disabled={syncingCounts}
-            className="gap-2"
-            variant="outline"
-            title="Fix missing status fields and update status based on shift dates"
-          >
-            {syncingCounts ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Fixing Status...
-              </>
-            ) : (
-              <>
-                <FileText className="h-4 w-4" />
-                Fix Status Fields
-              </>
-            )}
-          </Button>
-          
-          <Button 
-            onClick={async () => {
-              // Quick fix: Extend all caregiver shifts to end of 2025
-              try {
-                setSyncingCounts(true)
-                console.log('🔧 Extending all caregiver shifts to December 31, 2025...')
-                
-                const allCaregivers = await getCaregivers()
-                let updated = 0
-                
-                for (const caregiver of allCaregivers) {
-                  try {
-                    // Update shift end date to end of 2025
-                    await updateCaregiver(caregiver.caregiver_id, {
-                      shift_end_date: dateToTimestamp('2025-12-31'),
-                      status: 'Active' // Also ensure status is Active
-                    })
-                    updated++
-                    console.log(`✅ Extended shift for ${caregiver.first_name} ${caregiver.last_name}`)
-                  } catch (error) {
-                    console.error(`❌ Failed to update ${caregiver.first_name} ${caregiver.last_name}:`, error)
-                  }
-                }
-                
-                // Refresh caregivers list
-                const updatedCaregivers = await getCaregivers()
-                setCaregivers(updatedCaregivers)
-                
-                toast({
-                  title: "Shifts Extended",
-                  description: `Extended ${updated} caregiver shifts to December 31, 2025 and set them as Active.`,
-                })
-              } catch (error) {
-                console.error("Error extending shifts:", error)
-                toast({
-                  title: "Error",
-                  description: "Failed to extend caregiver shifts. Please try again.",
-                  variant: "destructive"
-                })
-              } finally {
-                setSyncingCounts(false)
-              }
-            }}
-            disabled={syncingCounts}
-            className="gap-2"
-            variant="outline"
-            title="Extend all caregiver shifts to December 31, 2025 and set as Active"
-          >
-            {syncingCounts ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Extending Shifts...
-              </>
-            ) : (
-              <>
-                <Calendar className="h-4 w-4" />
-                Extend All Shifts
-              </>
-            )}
-          </Button>
-          
           <Button 
             variant="outline" 
-            onClick={async () => {
-              try {
-                setSyncingCounts(true)
-                
-                // First update caregiver status based on shift dates
-                const statusUpdated = await updateCaregiverStatusByDates()
-                
-                // Then sync patient counts
-                await syncAllCaregiverPatientCounts()
-                
-                toast({
-                  title: "Sync Complete",
-                  description: `Updated ${statusUpdated} caregiver statuses and synced all patient counts.`,
-                })
-                
-                // Refresh caregivers list
-                const updatedCaregivers = await getCaregivers()
-                setCaregivers(updatedCaregivers)
-              } catch (error) {
-                console.error("Error syncing:", error)
-                toast({
-                  title: "Error",
-                  description: "Failed to sync caregiver data",
-                  variant: "destructive"
-                })
-              } finally {
-                setSyncingCounts(false)
-              }
-            }}
-            disabled={syncingCounts}
             className="gap-2"
-            title="Update caregiver status based on shift dates and synchronize patient counts"
+            onClick={handleSyncPatientCounts}
+            disabled={syncingCounts}
           >
             {syncingCounts ? (
               <>
@@ -1741,315 +1613,11 @@ const Caregivers = () => {
               </>
             ) : (
               <>
-                <Users className="h-4 w-4" />
-                Sync All Data
+                <RefreshCw className="h-4 w-4" />
+                Sync Patient Counts
               </>
             )}
           </Button>
-          <Button 
-            variant="outline" 
-            onClick={async () => {
-              try {
-                setSyncingCounts(true)
-                
-                // First update caregiver status based on shift dates
-                await updateCaregiverStatusByDates()
-                
-                // Generate capacity report first
-                const report = await generateCapacityReport()
-                
-                // First sync patient counts to get accurate data
-                await syncAllCaregiverPatientCounts()
-                
-                const result = await checkAndFixAllCaregiverCapacities()
-                
-                if (result.fixed > 0) {
-                  toast({
-                    title: "Capacity Issues Fixed",
-                    description: result.message,
-                  })
-                  
-                  // Refresh caregivers list after fixing
-                  const updatedCaregivers = await getCaregivers()
-                  setCaregivers(updatedCaregivers)
-                } else if (result.failed > 0) {
-                  toast({
-                    title: "Capacity Check Warning", 
-                    description: `${result.message} You may need to add more caregivers or increase capacity limits.`,
-                    variant: "destructive"
-                  })
-                  
-                  // Show additional info if all caregivers are at capacity
-                  if (report) {
-                    toast({
-                      title: "System Status",
-                      description: `${report.underCapacity} caregivers have available capacity. Check console for detailed report.`,
-                    })
-                  }
-                } else {
-                  toast({
-                    title: "All Clear",
-                    description: result.message,
-                  })
-                }
-              } catch (error) {
-                console.error("Error checking capacities:", error)
-                toast({
-                  title: "Error",
-                  description: "Failed to check caregiver capacities",
-                  variant: "destructive"
-                })
-              } finally {
-                setSyncingCounts(false)
-              }
-            }}
-            disabled={syncingCounts}
-            className="gap-2"
-            title="Check and fix caregivers who exceed their patient limits (like Dumpy Zzz with 4 patients but max 2)"
-          >
-            {syncingCounts ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Checking...
-              </>
-            ) : (
-              <>
-                <Filter className="h-4 w-4" />
-                Fix Capacity Issues
-              </>
-            )}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={async () => {
-              try {
-                setSyncingCounts(true)
-                
-                // First update caregiver status based on shift dates
-                const statusUpdated = await updateCaregiverStatusByDates()
-                
-                // Generate detailed diagnostic report
-                console.log(`\n🔍 DETAILED REDISTRIBUTION FAILURE ANALYSIS`)
-                console.log(`=`.repeat(80))
-                
-                const allCaregivers = await getCaregivers()
-                
-                // Show system overview
-                console.log(`\n📊 SYSTEM OVERVIEW:`)
-                console.log(`   Total Caregivers: ${allCaregivers.length}`)
-                console.log(`   Status Updates Applied: ${statusUpdated}`)
-                
-                const activeCount = allCaregivers.filter(c => c.status === 'Active').length
-                const inactiveCount = allCaregivers.length - activeCount
-                console.log(`   Active: ${activeCount} | Inactive: ${inactiveCount}`)
-                
-                // Analyze each caregiver
-                let overCapacity = 0
-                let atCapacity = 0
-                let underCapacity = 0
-                let totalPatients = 0
-                let totalCapacity = 0
-                
-                console.log(`\n👥 DETAILED CAREGIVER ANALYSIS:`)
-                allCaregivers.forEach((caregiver, index) => {
-                  const current = caregiver.assigned_patients_count || 0
-                  const max = caregiver.max_patients || getMaxPatientsForShift(caregiver.shift_type)
-                  const status = caregiver.status || 'Unknown'
-                  
-                  totalPatients += current
-                  totalCapacity += max
-                  
-                  let statusIcon = '✅'
-                  let capacityStatus = 'UNDER CAPACITY'
-                  
-                  if (current > max) {
-                    overCapacity++
-                    statusIcon = '🚨'
-                    capacityStatus = `OVER CAPACITY BY ${current - max}`
-                  } else if (current === max) {
-                    atCapacity++
-                    statusIcon = '⚠️'
-                    capacityStatus = 'AT FULL CAPACITY'
-                  } else {
-                    underCapacity++
-                    capacityStatus = `${max - current} SLOTS AVAILABLE`
-                  }
-                  
-                  console.log(`${statusIcon} ${index + 1}. ${caregiver.first_name} ${caregiver.last_name}`)
-                  console.log(`     Status: ${status}`)
-                  
-                  // Show shift dates for status verification
-                  if (caregiver.shift_start_date) {
-                    const startDate = timestampToDate(caregiver.shift_start_date)
-                    const endDate = caregiver.shift_end_date ? timestampToDate(caregiver.shift_end_date) : 'Ongoing'
-                    console.log(`     Shift Period: ${startDate} → ${endDate}`)
-                  } else {
-                    console.log(`     Shift Period: Not configured`)
-                  }
-                  
-                  console.log(`     Shift: ${caregiver.shift_type} (Max: ${max} patients)`)
-                  console.log(`     Current Patients: ${current}/${max}`)
-                  console.log(`     Capacity Status: ${capacityStatus}`)
-                  console.log(``)
-                })
-                
-                console.log(`📈 CAPACITY SUMMARY:`)
-                console.log(`   🚨 Over Capacity: ${overCapacity} caregivers`)
-                console.log(`   ⚠️ At Capacity: ${atCapacity} caregivers`)
-                console.log(`   ✅ Under Capacity: ${underCapacity} caregivers`)
-                console.log(`   📊 System Utilization: ${((totalPatients / totalCapacity) * 100).toFixed(1)}%`)
-                
-                console.log(`\n🔍 WHY REDISTRIBUTION FAILS:`)
-                if (underCapacity === 0) {
-                  console.log(`   ❌ PROBLEM: No caregivers have available capacity`)
-                  console.log(`   📝 All ${atCapacity + overCapacity} active caregivers are at or over their limits`)
-                  console.log(`   💡 SOLUTION NEEDED: Add more caregivers OR increase capacity limits`)
-                } else {
-                  console.log(`   ✅ ${underCapacity} caregivers have available capacity`)
-                  console.log(`   🔧 Redistribution should work - check for other issues`)
-                }
-                
-                console.log(`\n💡 RECOMMENDED ACTIONS:`)
-                if (underCapacity === 0) {
-                  console.log(`   1. 🆕 ADD MORE CAREGIVERS to the system`)
-                  console.log(`   2. 📊 INCREASE max_patients limits for existing caregivers`)
-                  console.log(`   3. 🔄 CHANGE some caregivers from Day (2 max) to Night (4 max) shift`)
-                  console.log(`   4. 📋 MANUALLY reassign patients through the patient management page`)
-                  
-                  // Find best candidates for capacity increase
-                  const dayShiftFull = allCaregivers.filter(c => 
-                    c.status === 'Active' && 
-                    c.shift_type === 'Day' && 
-                    (c.assigned_patients_count || 0) >= (c.max_patients || 2)
-                  )
-                  
-                  if (dayShiftFull.length > 0) {
-                    console.log(`\n🎯 QUICK FIXES:`)
-                    console.log(`   • Change ${dayShiftFull.length} Day shift caregivers to Night shift (doubles capacity)`)
-                    dayShiftFull.slice(0, 3).forEach(c => {
-                      console.log(`     - ${c.first_name} ${c.last_name}: Day→Night (2→4 max patients)`)
-                    })
-                  }
-                } else {
-                  console.log(`   1. ✅ System has ${underCapacity} caregivers with available capacity`)
-                  console.log(`   2. 🔧 Run the "Fix Capacity Issues" button to redistribute`)
-                }
-                
-                console.log(`=`.repeat(80))
-                
-                toast({
-                  title: "Diagnostic Complete",
-                  description: `Updated ${statusUpdated} statuses. Found ${overCapacity} over-capacity and ${underCapacity} available caregivers. Check console for detailed analysis.`,
-                })
-                
-                // Refresh caregivers list
-                const updatedCaregivers = await getCaregivers()
-                setCaregivers(updatedCaregivers)
-              } catch (error) {
-                console.error("Error running diagnostics:", error)
-                toast({
-                  title: "Error",
-                  description: "Failed to run diagnostics",
-                  variant: "destructive"
-                })
-              } finally {
-                setSyncingCounts(false)
-              }
-            }}
-            disabled={syncingCounts}
-            className="gap-2"
-            title="Update caregiver status based on shift dates and run detailed analysis"
-          >
-            {syncingCounts ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Analyzing...
-              </>
-            ) : (
-              <>
-                <Search className="h-4 w-4" />
-                Diagnose Issue
-              </>
-            )}
-          </Button>
-          
-          <Button
-            onClick={async () => {
-              const isReady = await testCaregiverShiftIndex()
-              toast({
-                title: isReady ? "Index Ready ✅" : "Index Not Ready ❌",
-                description: isReady 
-                  ? "Firebase composite index is built and ready to use" 
-                  : "Index is still building. Please wait 5-10 minutes and try again.",
-                variant: isReady ? "default" : "destructive"
-              })
-            }}
-            variant="outline"
-            className="gap-2"
-            title="Test if Firebase composite index is ready"
-          >
-            <ExternalLink className="h-4 w-4" />
-            Test Index
-          </Button>
-          
-          <Button
-            onClick={async () => {
-              if (caregivers.length === 0) {
-                toast({
-                  title: "No Caregivers",
-                  description: "No caregivers found to test redistribution with.",
-                  variant: "destructive"
-                })
-                return
-              }
-              
-              // Find a caregiver with patients to test redistribution
-              const caregiverWithPatients = caregivers.find(c => (c.assigned_patients_count || 0) > 0)
-              
-              if (!caregiverWithPatients) {
-                toast({
-                  title: "No Patients to Redistribute",
-                  description: "No caregivers have assigned patients to test redistribution with.",
-                  variant: "destructive"
-                })
-                return
-              }
-              
-              console.log(`🧪 Testing redistribution for caregiver: ${caregiverWithPatients.first_name} ${caregiverWithPatients.last_name}`)
-              
-              try {
-                // Test with opposite shift type
-                const testShiftType = caregiverWithPatients.shift_type === 'Day' ? 'Night' : 'Day'
-                console.log(`🧪 Testing shift change: ${caregiverWithPatients.shift_type} → ${testShiftType}`)
-                
-                const result = await redistributePatientsOnShiftChange(
-                  caregiverWithPatients.caregiver_id,
-                  testShiftType
-                )
-                
-                console.log('🧪 Test result:', result)
-                
-                toast({
-                  title: "Test Complete",
-                  description: `Test result: ${result.redistributed} redistributed, ${result.failed} failed. Check console for details.`,
-                })
-              } catch (error) {
-                console.error('🧪 Test failed:', error)
-                toast({
-                  title: "Test Failed",
-                  description: "Redistribution test failed. Check console for error details.",
-                  variant: "destructive"
-                })
-              }
-            }}
-            variant="outline"
-            className="gap-2"
-            title="Test redistribution logic with existing caregiver data"
-          >
-            <Search className="h-4 w-4" />
-            Test Redistribution
-          </Button>
-          
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">
@@ -2685,43 +2253,102 @@ const Caregivers = () => {
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Full Name</Label>
                       <p className="text-sm font-semibold">
-                        {viewingCaregiver.first_name} {viewingCaregiver.middle_name} {viewingCaregiver.last_name}
+                        {[viewingCaregiver.first_name, viewingCaregiver.middle_name, viewingCaregiver.last_name]
+                          .filter(Boolean).join(' ') || "Name not provided"}
                       </p>
                     </div>
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Birthday</Label>
-                      <p className="text-sm">{viewingCaregiver.birthday || "Not specified"}</p>
+                      <p className="text-sm">
+                        {(() => {
+                          // Check multiple possible birthday field names
+                          const birthday = viewingCaregiver.birthday || 
+                                         viewingCaregiver.birthdate || 
+                                         (viewingCaregiver as any).date_of_birth;
+                          
+                          // Debug: Log available birthday fields
+                          console.log(`🎂 Birthday Debug for ${viewingCaregiver.first_name}:`, {
+                            birthday: viewingCaregiver.birthday,
+                            birthdate: viewingCaregiver.birthdate,
+                            date_of_birth: (viewingCaregiver as any).date_of_birth,
+                            finalValue: birthday,
+                            caregiverKeys: Object.keys(viewingCaregiver).filter(key => 
+                              key.toLowerCase().includes('birth') || 
+                              key.toLowerCase().includes('date')
+                            )
+                          });
+                          
+                          if (!birthday) return "Not provided";
+                          
+                          try {
+                            // Try to format the date if it's a valid date
+                            const date = new Date(birthday);
+                            if (!isNaN(date.getTime())) {
+                              return date.toLocaleDateString();
+                            }
+                            // If it's not a valid date, return as is
+                            return birthday;
+                          } catch {
+                            return birthday;
+                          }
+                        })()}
+                      </p>
+                      {/* Temporary debug display */}
+                      {process.env.NODE_ENV === 'development' && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Debug: birthday={viewingCaregiver.birthday || 'null'}, 
+                          birthdate={viewingCaregiver.birthdate || 'null'}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Email</Label>
-                      <p className="text-sm">{viewingCaregiver.email}</p>
+                      <p className="text-sm">{viewingCaregiver.email || "Not provided"}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Contact Number</Label>
-                      <p className="text-sm">{viewingCaregiver.contact_number}</p>
+                      <p className="text-sm">
+                        {viewingCaregiver.contact_number ? 
+                          (typeof viewingCaregiver.contact_number === 'number' ? 
+                            viewingCaregiver.contact_number.toString() : 
+                            viewingCaregiver.contact_number) : 
+                          "Not provided"
+                        }
+                      </p>
                     </div>
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Address</Label>
-                    <p className="text-sm">
-                      {viewingCaregiver.address ? 
-                        `${viewingCaregiver.address.street}, ${viewingCaregiver.address.barangay}, ${viewingCaregiver.address.city_municipality}, ${viewingCaregiver.address.province}`.replace(/^,+|,+$/g, '').replace(/,+/g, ', ') || "No address specified"
-                        : "No address specified"
-                      }
-                    </p>
+                    <p className="text-sm">{formatAddress(viewingCaregiver.address)}</p>
                   </div>
+
+                  {/* System Information */}
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">System Information</Label>
+                    <div className="grid grid-cols-2 gap-4 mt-2">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Caregiver ID</Label>
+                        <p className="text-xs font-mono bg-gray-50 p-1 rounded">{viewingCaregiver.caregiver_id || "Not available"}</p>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">User ID</Label>
+                        <p className="text-xs font-mono bg-gray-50 p-1 rounded">{viewingCaregiver.user_id || "Not linked"}</p>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Shift Type</Label>
                       <Badge className={getShiftColor(viewingCaregiver.shift_type)}>
-                        {viewingCaregiver.shift_type}
+                        {viewingCaregiver.shift_type || "Not specified"}
                       </Badge>
                     </div>
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Role</Label>
-                      <p className="text-sm capitalize">{viewingCaregiver.role}</p>
+                      <p className="text-sm capitalize">{viewingCaregiver.role || "Not specified"}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -2954,11 +2581,22 @@ const Caregivers = () => {
                       <div className="space-y-3">
                         {assignedPatients.map((patient) => (
                           <div key={patient.patient_id} className="p-4 border rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+                            {/* Debug patient data */}
+                            {console.log('Rendering patient in caregiver view:', {
+                              patient_id: patient.patient_id,
+                              first_name: patient.first_name,
+                              last_name: patient.last_name,
+                              full_patient_object: patient
+                            })}
                             <div className="flex items-start justify-between">
                               <div className="flex-1 space-y-2">
                                 <div className="flex items-center gap-3">
                                   <h4 className="font-semibold text-sm">
-                                    {patient.first_name} {patient.last_name}
+                                    {patient.first_name && patient.last_name ? 
+                                      `${patient.first_name} ${patient.last_name}` : 
+                                      patient.first_name || patient.last_name || 
+                                      patient.name || '[Name not available]'
+                                    }
                                   </h4>
                                   <Badge variant="outline" className="text-xs">
                                     {patient.gender}
@@ -2973,9 +2611,45 @@ const Caregivers = () => {
                                 <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground">
                                   <div className="flex items-center gap-1">
                                     <Calendar className="h-3 w-3" />
-                                    Age: {patient.birthdate ? 
-                                      Math.floor((new Date().getTime() - new Date(patient.birthdate).getTime()) / (1000 * 60 * 60 * 24 * 365)) 
-                                      : 'N/A'} years
+                                    Age: {(() => {
+                                      // Debug the birthdate field
+                                      console.log('Patient birthdate data:', {
+                                        patient_id: patient.patient_id,
+                                        birthdate: patient.birthdate,
+                                        birthdate_type: typeof patient.birthdate,
+                                        raw_patient_data: patient
+                                      });
+                                      
+                                      if (!patient.birthdate) return 'N/A';
+                                      
+                                      try {
+                                        let birthDate;
+                                        
+                                        // Handle different birthdate formats
+                                        if (patient.birthdate.toDate && typeof patient.birthdate.toDate === 'function') {
+                                          // Firebase Timestamp
+                                          birthDate = patient.birthdate.toDate();
+                                        } else if (typeof patient.birthdate === 'string') {
+                                          // String date
+                                          birthDate = new Date(patient.birthdate);
+                                        } else if (patient.birthdate instanceof Date) {
+                                          // Already a Date object
+                                          birthDate = patient.birthdate;
+                                        } else {
+                                          console.warn('Unknown birthdate format:', patient.birthdate);
+                                          return 'Invalid';
+                                        }
+                                        
+                                        const today = new Date();
+                                        const ageInMilliseconds = today.getTime() - birthDate.getTime();
+                                        const ageInYears = Math.floor(ageInMilliseconds / (1000 * 60 * 60 * 24 * 365.25));
+                                        
+                                        return ageInYears >= 0 ? ageInYears : 'Invalid';
+                                      } catch (error) {
+                                        console.error('Error calculating age:', error);
+                                        return 'Error';
+                                      }
+                                    })()} years
                                   </div>
                                   {patient.contact_number && (
                                     <div className="flex items-center gap-1">
@@ -3032,6 +2706,93 @@ const Caregivers = () => {
                         <p className="text-xs">This caregiver currently has no assigned patients.</p>
                       </div>
                     )}
+                  </div>
+
+                  {/* System Debugging Information */}
+                  <div className="mt-6 border-t pt-4">
+                    <details className="group">
+                      <summary className="cursor-pointer list-none">
+                        <div className="flex items-center justify-between p-2 rounded border hover:bg-muted/50">
+                          <div className="flex items-center gap-2">
+                            <Info className="h-4 w-4 text-muted-foreground" />
+                            <Label className="text-sm font-medium cursor-pointer">System Information & Debugging</Label>
+                          </div>
+                          <ChevronDown className="h-4 w-4 text-muted-foreground group-open:rotate-180 transition-transform" />
+                        </div>
+                      </summary>
+                      <div className="mt-3 space-y-4 p-3 bg-muted/20 rounded border">
+                        {/* Data Completeness Status */}
+                        <div>
+                          <Label className="text-xs font-medium text-muted-foreground">Data Completeness Status</Label>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            <Badge variant={viewingCaregiver.first_name ? "default" : "secondary"} className="text-xs">
+                              {viewingCaregiver.first_name ? "✓" : "✗"} Name
+                            </Badge>
+                            <Badge variant={viewingCaregiver.email ? "default" : "secondary"} className="text-xs">
+                              {viewingCaregiver.email ? "✓" : "✗"} Email
+                            </Badge>
+                            <Badge variant={viewingCaregiver.contact_number ? "default" : "secondary"} className="text-xs">
+                              {viewingCaregiver.contact_number ? "✓" : "✗"} Contact
+                            </Badge>
+                            <Badge variant={viewingCaregiver.address ? "default" : "secondary"} className="text-xs">
+                              {viewingCaregiver.address ? "✓" : "✗"} Address
+                            </Badge>
+                            <Badge variant={viewingCaregiver.shift_type ? "default" : "secondary"} className="text-xs">
+                              {viewingCaregiver.shift_type ? "✓" : "✗"} Shift
+                            </Badge>
+                            <Badge variant={viewingCaregiver.license_number ? "default" : "secondary"} className="text-xs">
+                              {viewingCaregiver.license_number ? "✓" : "✗"} License
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {/* Entity Linking Status */}
+                        <div>
+                          <Label className="text-xs font-medium text-muted-foreground">Entity Linking Status</Label>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            <Badge variant={viewingCaregiver.user_id ? "default" : "secondary"} className="text-xs">
+                              {viewingCaregiver.user_id ? "✓ Users Entity Linked" : "✗ No Users Link"}
+                            </Badge>
+                            <Badge variant={viewingCaregiver.caregiver_id ? "default" : "secondary"} className="text-xs">
+                              {viewingCaregiver.caregiver_id ? "✓ Caregiver Entity" : "✗ No Caregiver ID"}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {/* Raw Data View */}
+                        <div>
+                          <Label className="text-xs font-medium text-muted-foreground">Raw Data (JSON)</Label>
+                          <pre className="text-xs bg-gray-50 dark:bg-gray-900 p-2 rounded border mt-1 overflow-auto max-h-40 whitespace-pre-wrap">
+                            {JSON.stringify(viewingCaregiver, null, 2)}
+                          </pre>
+                        </div>
+
+                        {/* Data Source Information */}
+                        <div>
+                          <Label className="text-xs font-medium text-muted-foreground">Data Source Verification</Label>
+                          <div className="grid grid-cols-2 gap-3 mt-1 text-xs">
+                            <div>
+                              <Label className="text-xs text-muted-foreground">From Users Entity:</Label>
+                              <p className="text-xs">• Name: {viewingCaregiver.first_name ? "✓" : "✗"}</p>
+                              <p className="text-xs">• Contact: {viewingCaregiver.contact_number ? "✓" : "✗"}</p>
+                              <p className="text-xs">• Address: {viewingCaregiver.address ? "✓" : "✗"} 
+                                {viewingCaregiver.address && (
+                                  <span className="text-muted-foreground">
+                                    ({typeof viewingCaregiver.address === 'string' ? 'JSON string' : 'object'})
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                            <div>
+                              <Label className="text-xs text-muted-foreground">From Caregivers Entity:</Label>
+                              <p className="text-xs">• Shift Type: {viewingCaregiver.shift_type ? "✓" : "✗"}</p>
+                              <p className="text-xs">• License: {viewingCaregiver.license_number ? "✓" : "✗"}</p>
+                              <p className="text-xs">• Capacity: {viewingCaregiver.max_patients ? "✓" : "✗"}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </details>
                   </div>
                 </div>
               )}
@@ -3148,41 +2909,89 @@ const Caregivers = () => {
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              {filteredCaregivers.map((caregiver) => (
-                <div
-                  key={caregiver.caregiver_id}
-                  className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
-                      <Users className="h-6 w-6 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold">
-                        {caregiver.first_name} {caregiver.last_name}
-                      </h3>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <Phone className="h-3 w-3" />
-                          {caregiver.contact_number || "No phone"}
-                        </span>
-                        <span>{caregiver.email}</span>
-                        <span className="flex items-center gap-1">
-                          <MapPin className="h-3 w-3" />
-                          {caregiver.address?.city_municipality || "No address"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[200px]">Eldercare</TableHead>
+                    <TableHead className="min-w-[150px]">Contact</TableHead>
+                    <TableHead className="min-w-[200px]">Address</TableHead>
+                    <TableHead className="min-w-[120px]">Shift</TableHead>
+                    <TableHead className="min-w-[120px]">Availability</TableHead>
+                    <TableHead className="min-w-[100px]">Patients</TableHead>
+                    <TableHead className="min-w-[120px]">License</TableHead>
+                    <TableHead className="min-w-[120px]">Contract</TableHead>
+                    <TableHead className="min-w-[100px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredCaregivers.map((caregiver) => (
+                    <TableRow key={caregiver.caregiver_id} className="hover:bg-muted/50">
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
+                            <Users className="h-5 w-5 text-primary" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-sm">
+                              {caregiver.first_name} {caregiver.last_name}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {caregiver.email}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Role: {caregiver.role || "Not specified"}
+                            </div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1 text-sm">
+                            <Phone className="h-3 w-3 text-muted-foreground" />
+                            <span>{caregiver.contact_number || "No phone"}</span>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-start gap-1 text-sm">
+                          <MapPin className="h-3 w-3 text-muted-foreground mt-0.5 flex-shrink-0" />
+                          <span className="line-clamp-2 text-xs">
+                            {formatAddress(caregiver.address)}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
                         <Badge className={getShiftColor(caregiver.shift_type)}>
                           {caregiver.shift_type}
                         </Badge>
-                        {/* Add availability status */}
-                        {getAvailabilityBadge(caregiver.caregiver_id)}
-                        <span className="text-sm text-muted-foreground">
-                          Role: {caregiver.role || "Not specified"}
-                        </span>
-                        {/* Add license status indicator */}
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {caregiver.shift_type === 'Day' ? '7AM - 7PM' : '7PM - 7AM'}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          {getAvailabilityBadge(caregiver.caregiver_id)}
+                          {canCaregiverTakeMorePatients(caregiver) ? (
+                            <div className="text-xs text-green-600">
+                              Available ({getAvailablePatientSlots(caregiver)} slots)
+                            </div>
+                          ) : (
+                            <div className="text-xs text-red-600">
+                              Full Capacity
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm font-medium">
+                          {caregiver.assigned_patients_count || 0} / {caregiver.max_patients || getMaxPatientsForShift(caregiver.shift_type)}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          patients assigned
+                        </div>
+                      </TableCell>
+                      <TableCell>
                         {caregiver.license_picture ? (
                           <Badge variant="outline" className="text-green-600 border-green-600 gap-1">
                             <FileText className="h-3 w-3" />
@@ -3193,7 +3002,13 @@ const Caregivers = () => {
                             No License
                           </Badge>
                         )}
-                        {/* Add contract status indicator */}
+                        {caregiver.license_number && (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            {caregiver.license_number}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         {caregiver.contract_start_date && caregiver.contract_end_date ? (
                           (() => {
                             const today = new Date();
@@ -3203,19 +3018,19 @@ const Caregivers = () => {
                             if (daysUntilExpiry < 0) {
                               return (
                                 <Badge variant="outline" className="text-red-600 border-red-600">
-                                  Contract Expired
+                                  Expired
                                 </Badge>
                               );
                             } else if (daysUntilExpiry <= 30) {
                               return (
                                 <Badge variant="outline" className="text-amber-600 border-amber-600">
-                                  Contract Expiring ({daysUntilExpiry}d)
+                                  Expiring ({daysUntilExpiry}d)
                                 </Badge>
                               );
                             } else {
                               return (
                                 <Badge variant="outline" className="text-blue-600 border-blue-600">
-                                  Contract Valid
+                                  Valid
                                 </Badge>
                               );
                             }
@@ -3225,83 +3040,70 @@ const Caregivers = () => {
                             No Contract
                           </Badge>
                         )}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-sm text-muted-foreground flex items-center gap-1">
-                          <Users className="h-3 w-3" />
-                          Patients: {caregiver.assigned_patients_count || 0}/{caregiver.max_patients || getMaxPatientsForShift(caregiver.shift_type)}
-                        </span>
-                        {canCaregiverTakeMorePatients(caregiver) ? (
-                          <Badge variant="outline" className="text-green-600 border-green-600">
-                            Available
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-red-600 border-red-600">
-                            Full
-                          </Badge>
+                        {caregiver.contract_end_date && (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Until {new Date(caregiver.contract_end_date).toLocaleDateString()}
+                          </div>
                         )}
-                        {(caregiver.assigned_patients_count || 0) > 0 && (
-                          <Badge variant="secondary" className="text-xs">
-                            {caregiver.assigned_patients_count} assigned
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={() => handleViewCaregiver(caregiver)}
-                      title="View Details"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      onClick={() => handleEdit(caregiver)}
-                      title="Edit Eldercare"
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          title="Delete Eldercare"
-                          disabled={deletingCaregiver === caregiver.caregiver_id}
-                        >
-                          {deletingCaregiver === caregiver.caregiver_id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Eldercare</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Are you sure you want to delete {caregiver.first_name} {caregiver.last_name}? 
-                            This action cannot be undone and will permanently remove their record from the system.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction 
-                            onClick={() => handleDelete(caregiver.caregiver_id)}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => handleViewCaregiver(caregiver)}
+                            title="View Details"
                           >
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-                </div>
-              ))}
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => handleEdit(caregiver)}
+                            title="Edit Eldercare"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                title="Delete Eldercare"
+                                disabled={deletingCaregiver === caregiver.caregiver_id}
+                              >
+                                {deletingCaregiver === caregiver.caregiver_id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete Eldercare</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Are you sure you want to delete {caregiver.first_name} {caregiver.last_name}? 
+                                  This action cannot be undone and will permanently remove their record from the system.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction 
+                                  onClick={() => handleDelete(caregiver.caregiver_id)}
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                >
+                                  Delete
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>

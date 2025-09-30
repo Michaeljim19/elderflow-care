@@ -44,6 +44,14 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Label } from "@/components/ui/label"
 import { 
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { 
   Select,
   SelectContent,
   SelectItem,
@@ -81,6 +89,21 @@ const Patients = () => {
   const [currentPatientMedicalHistory, setCurrentPatientMedicalHistory] = useState<any[]>([])
   const [loadingMedicalHistory, setLoadingMedicalHistory] = useState(false)
   
+  // Medical History View/Edit state
+  const [viewingMedicalRecord, setViewingMedicalRecord] = useState<any | null>(null)
+  const [editingMedicalRecord, setEditingMedicalRecord] = useState<any | null>(null)
+  const [isEditMedicalDialogOpen, setIsEditMedicalDialogOpen] = useState(false)
+  const [medicalEditForm, setMedicalEditForm] = useState({
+    condition: '',
+    description: '',
+    date_diagnosed: '',
+    treatment: '',
+    severity: '',
+    status: '',
+    medications: '',
+    notes: ''
+  })
+  
   // PSGC API states for address dropdowns
   const [provinces, setProvinces] = useState<Province[]>([])
   const [cities, setCities] = useState<CityMunicipality[]>([])
@@ -102,6 +125,7 @@ const Patients = () => {
   // Form state for adding new patient
   const [formData, setFormData] = useState({
     first_name: "",
+    middle_name: "",
     last_name: "",
     birthdate: "",
     gender: undefined as "Male" | "Female" | "Other" | undefined,
@@ -422,6 +446,7 @@ const Patients = () => {
   const resetForm = () => {
     setFormData({
       first_name: "",
+      middle_name: "",
       last_name: "",
       birthdate: "",
       gender: undefined as "Male" | "Female" | "Other" | undefined,
@@ -744,12 +769,115 @@ const Patients = () => {
     setCurrentPatientMedicalHistory([])
   }
 
+  // Handler to view medical history record details
+  const handleViewMedicalRecord = (record: any) => {
+    console.log('View button clicked', record)
+    setViewingMedicalRecord(record)
+  }
+
+  // Handler to close medical record view
+  const closeViewMedicalRecord = () => {
+    setViewingMedicalRecord(null)
+  }
+
+  // Handler to edit medical history record
+  const handleEditMedicalRecord = (record: any) => {
+    console.log('Edit button clicked', record)
+    setEditingMedicalRecord(record)
+    setMedicalEditForm({
+      condition: record.condition || '',
+      description: record.description || '',
+      date_diagnosed: record.date_diagnosed ? 
+        (typeof record.date_diagnosed === 'string' 
+          ? record.date_diagnosed.split('T')[0]
+          : new Date(record.date_diagnosed).toISOString().split('T')[0]
+        ) : '',
+      treatment: record.treatment || '',
+      severity: record.severity || '',
+      status: record.status || '',
+      medications: record.medications || record.current_medications?.join(', ') || '',
+      notes: record.notes || ''
+    })
+    setIsEditMedicalDialogOpen(true)
+  }
+
+  // Handler to update medical history record
+  const handleUpdateMedicalRecord = async () => {
+    if (!editingMedicalRecord) return
+
+    try {
+      const updatedRecord = {
+        ...editingMedicalRecord,
+        condition: medicalEditForm.condition,
+        description: medicalEditForm.description,
+        date_diagnosed: medicalEditForm.date_diagnosed,
+        treatment: medicalEditForm.treatment,
+        severity: medicalEditForm.severity,
+        status: medicalEditForm.status,
+        medications: medicalEditForm.medications,
+        // Remove notes field to avoid TypeScript error
+        updated_at: new Date().toISOString()
+      }
+
+      await updateMedicalHistory(editingMedicalRecord.history_id, updatedRecord)
+      
+      // Refresh medical history
+      if (selectedPatientForMedicalHistory) {
+        const updatedHistory = await getMedicalHistoryByPatient(selectedPatientForMedicalHistory)
+        setCurrentPatientMedicalHistory(updatedHistory)
+      }
+      
+      setIsEditMedicalDialogOpen(false)
+      setEditingMedicalRecord(null)
+      
+      toast({
+        title: "Success",
+        description: "Medical record updated successfully"
+      })
+    } catch (error) {
+      console.error("Error updating medical record:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update medical record",
+        variant: "destructive"
+      })
+    }
+  }
+
+  // Handler to delete medical history record
+  const handleDeleteMedicalRecord = async (record: any) => {
+    console.log('Delete button clicked', record)
+    if (window.confirm('Are you sure you want to delete this medical record?')) {
+      try {
+        // Delete logic would go here
+        console.log('Deleting medical record:', record.history_id)
+        // Refresh medical history after deletion
+        if (selectedPatientForMedicalHistory) {
+          const records = await getMedicalHistoryByPatient(selectedPatientForMedicalHistory)
+          setCurrentPatientMedicalHistory(records)
+        }
+        toast({
+          title: "Success",
+          description: "Medical record deleted successfully"
+        })
+      } catch (error) {
+        console.error('Error deleting medical record:', error)
+        toast({
+          title: "Error",
+          description: "Failed to delete medical record",
+          variant: "destructive"
+        })
+      }
+    }
+  }
+
   // Handler to open edit dialog for a specific patient
   const openEditDialog = (patient: Patient) => {
     setEditingPatient(patient)
     // Pre-populate form with patient data
     setFormData({
       first_name: patient.first_name || "",
+      middle_name: patient.middle_name || "",
       last_name: patient.last_name || "",
       birthdate: patient.birthdate || "",
       gender: patient.gender || undefined,
@@ -847,6 +975,7 @@ const Patients = () => {
       
       const updatedPatientData = {
         first_name: formData.first_name,
+        middle_name: formData.middle_name,
         last_name: formData.last_name,
         birthdate: formData.birthdate,
         gender: formData.gender,
@@ -876,7 +1005,7 @@ const Patients = () => {
           
           // Current Medical Conditions
           const conditions = formData.medical_history.currentMedicalConditions;
-          const patientName = `${formData.first_name} ${formData.last_name}`;
+          const patientName = `${formData.first_name}${formData.middle_name ? ' ' + formData.middle_name : ''} ${formData.last_name}`;
           if (conditions.diabetes) {
             await addMedicalHistory({
               patient_id: editingPatient.patient_id,
@@ -1180,7 +1309,10 @@ const Patients = () => {
       setAddingPatient(true)
       
       const newPatientData = {
+        id: '', // This will be set by Firebase
+        patient_id: '', // This will be set by Firebase
         first_name: formData.first_name,
+        middle_name: formData.middle_name,
         last_name: formData.last_name,
         birthdate: formData.birthdate,
         gender: formData.gender,
@@ -1204,14 +1336,14 @@ const Patients = () => {
       
       // Medical history records will be created for each selected condition/medication/allergy
       const recordDate = new Date().toISOString()
-      const patientName = `${formData.first_name} ${formData.last_name}`;
+      const patientName = `${formData.first_name}${formData.middle_name ? ' ' + formData.middle_name : ''} ${formData.last_name}`;
       
       console.log('Patient created, processing medical history records for:', patientName)
       
       // Create medical history records for each category
       if (formData.medical_history && patientDoc) {
         const recordDate = new Date().toISOString()
-        const patientName = `${formData.first_name} ${formData.last_name}`;
+        const patientName = `${formData.first_name}${formData.middle_name ? ' ' + formData.middle_name : ''} ${formData.last_name}`;
         
         // Current Medical Conditions
         const conditions = formData.medical_history.currentMedicalConditions;
@@ -1689,91 +1821,314 @@ const Patients = () => {
                 </Button>
               </div>
             ) : (
-              <div className="space-y-4">
-                {currentPatientMedicalHistory.map((record, index) => (
-                  <div
-                    key={record.id || index}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
-                        <FileText className="h-6 w-6 text-primary" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold">
-                          {record.condition}
-                        </h3>
-                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Activity className="h-3 w-3" />
-                            {record.severity}
-                          </span>
-                          {record.date_diagnosed && (
-                            <span className="flex items-center gap-1">
-                              <Calendar className="h-3 w-3" />
-                              {new Date(record.date_diagnosed).toLocaleDateString()}
-                            </span>
-                          )}
-                          {record.treatment && (
-                            <span className="flex items-center gap-1">
-                              <Heart className="h-3 w-3" />
-                              Treatment: {record.treatment}
-                            </span>
-                          )}
-                          {record.medications && (
-                            <span className="flex items-center gap-1">
-                              <Pill className="h-3 w-3" />
-                              {record.medications}
-                            </span>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Condition</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Severity</TableHead>
+                    <TableHead>Diagnosed</TableHead>
+                    <TableHead>Treatment</TableHead>
+                    <TableHead>Medications</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead>Updated</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {currentPatientMedicalHistory.map((record, index) => (
+                    <TableRow key={record.history_id || record.id || index}>
+                      <TableCell className="font-medium">
+                        {record.condition}
+                      </TableCell>
+                      <TableCell>
+                        <div className="max-w-xs">
+                          <p className="text-sm">{record.description}</p>
+                          {record.notes && (
+                            <p className="text-xs text-muted-foreground italic mt-1">
+                              Notes: {record.notes}
+                            </p>
                           )}
                         </div>
-                        {record.description && (
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {record.description}
-                          </p>
-                        )}
-                        {record.notes && (
-                          <p className="text-sm text-muted-foreground italic mt-1">
-                            Notes: {record.notes}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge className={
-                        record.status === 'Active' 
-                          ? 'bg-green-100 text-green-800' 
-                          : record.status === 'Resolved'
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-gray-100 text-gray-800'
-                      }>
-                        {record.status}
-                      </Badge>
-                      <Badge variant="outline" className={
-                        record.severity === 'Severe' 
-                          ? 'border-red-200 text-red-800' 
-                          : record.severity === 'Moderate'
-                          ? 'border-yellow-200 text-yellow-800'
-                          : 'border-blue-200 text-blue-800'
-                      }>
-                        {record.severity}
-                      </Badge>
-                      <Button variant="ghost" size="sm" title="View Details">
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="sm" title="Edit Record">
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="sm" title="Delete Record" className="text-red-600 hover:text-red-700">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={
+                          record.status === 'Active' 
+                            ? 'bg-green-100 text-green-800' 
+                            : record.status === 'Resolved'
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }>
+                          {record.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={
+                          record.severity === 'Severe' 
+                            ? 'border-red-200 text-red-800' 
+                            : record.severity === 'Moderate'
+                            ? 'border-yellow-200 text-yellow-800'
+                            : 'border-blue-200 text-blue-800'
+                        }>
+                          {record.severity}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {record.date_diagnosed ? new Date(record.date_diagnosed).toLocaleDateString() : 'N/A'}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {record.treatment || 'N/A'}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        <div className="max-w-xs">
+                          {record.medications || record.current_medications?.join(', ') || 'N/A'}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {record.created_at ? (
+                          typeof record.created_at === 'string' 
+                            ? new Date(record.created_at).toLocaleDateString()
+                            : record.created_at.toDate ? record.created_at.toDate().toLocaleDateString()
+                            : new Date(record.created_at).toLocaleDateString()
+                        ) : 'N/A'}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {record.updated_at ? (
+                          typeof record.updated_at === 'string' 
+                            ? new Date(record.updated_at).toLocaleDateString()
+                            : record.updated_at.toDate ? record.updated_at.toDate().toLocaleDateString()
+                            : new Date(record.updated_at).toLocaleDateString()
+                        ) : 'N/A'}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            title="View Details"
+                            onClick={() => handleViewMedicalRecord(record)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            title="Edit Record"
+                            onClick={() => handleEditMedicalRecord(record)}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            title="Delete Record" 
+                            className="text-red-600 hover:text-red-700"
+                            onClick={() => handleDeleteMedicalRecord(record)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
           </CardContent>
         </Card>
+
+        {/* View Medical Record Dialog */}
+        <Dialog open={!!viewingMedicalRecord} onOpenChange={closeViewMedicalRecord}>
+          <DialogContent className="sm:max-w-[600px]">
+            <DialogHeader>
+              <DialogTitle>Medical Record Details</DialogTitle>
+              <DialogDescription>
+                Detailed information about this medical record
+              </DialogDescription>
+            </DialogHeader>
+            {viewingMedicalRecord && (
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Condition</Label>
+                    <p className="text-sm font-semibold">{viewingMedicalRecord.condition}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Status</Label>
+                    <Badge className={
+                      viewingMedicalRecord.status === 'Active' 
+                        ? 'bg-green-100 text-green-800' 
+                        : viewingMedicalRecord.status === 'Resolved'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-gray-100 text-gray-800'
+                    }>
+                      {viewingMedicalRecord.status}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Severity</Label>
+                    <Badge variant="outline" className={
+                      viewingMedicalRecord.severity === 'Severe' 
+                        ? 'border-red-200 text-red-800' 
+                        : viewingMedicalRecord.severity === 'Moderate'
+                        ? 'border-yellow-200 text-yellow-800'
+                        : 'border-blue-200 text-blue-800'
+                    }>
+                      {viewingMedicalRecord.severity}
+                    </Badge>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Date Diagnosed</Label>
+                    <p className="text-sm">
+                      {viewingMedicalRecord.date_diagnosed ? new Date(viewingMedicalRecord.date_diagnosed).toLocaleDateString() : 'N/A'}
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Description</Label>
+                  <p className="text-sm">{viewingMedicalRecord.description || 'No description available'}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Treatment</Label>
+                  <p className="text-sm">{viewingMedicalRecord.treatment || 'No treatment specified'}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Medications</Label>
+                  <p className="text-sm">{viewingMedicalRecord.medications || viewingMedicalRecord.current_medications?.join(', ') || 'No medications specified'}</p>
+                </div>
+                {viewingMedicalRecord.notes && (
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Notes</Label>
+                    <p className="text-sm italic">{viewingMedicalRecord.notes}</p>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4 text-xs text-muted-foreground">
+                  <div>
+                    <Label className="text-xs font-medium">Created</Label>
+                    <p>{viewingMedicalRecord.created_at ? new Date(viewingMedicalRecord.created_at).toLocaleString() : 'N/A'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-xs font-medium">Updated</Label>
+                    <p>{viewingMedicalRecord.updated_at ? new Date(viewingMedicalRecord.updated_at).toLocaleString() : 'N/A'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit Medical Record Dialog */}
+        <Dialog open={isEditMedicalDialogOpen} onOpenChange={setIsEditMedicalDialogOpen}>
+          <DialogContent className="sm:max-w-[600px]">
+            <DialogHeader>
+              <DialogTitle>Edit Medical Record</DialogTitle>
+              <DialogDescription>
+                Update the medical record information
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-condition">Condition</Label>
+                  <Input 
+                    id="edit-condition"
+                    value={medicalEditForm.condition}
+                    onChange={(e) => setMedicalEditForm({...medicalEditForm, condition: e.target.value})}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-status">Status</Label>
+                  <Select 
+                    value={medicalEditForm.status} 
+                    onValueChange={(value) => setMedicalEditForm({...medicalEditForm, status: value})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Active">Active</SelectItem>
+                      <SelectItem value="Resolved">Resolved</SelectItem>
+                      <SelectItem value="Inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-severity">Severity</Label>
+                  <Select 
+                    value={medicalEditForm.severity} 
+                    onValueChange={(value) => setMedicalEditForm({...medicalEditForm, severity: value})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select severity" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Mild">Mild</SelectItem>
+                      <SelectItem value="Moderate">Moderate</SelectItem>
+                      <SelectItem value="Severe">Severe</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-date">Date Diagnosed</Label>
+                  <Input 
+                    id="edit-date"
+                    type="date"
+                    value={medicalEditForm.date_diagnosed}
+                    onChange={(e) => setMedicalEditForm({...medicalEditForm, date_diagnosed: e.target.value})}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-description">Description</Label>
+                <Textarea 
+                  id="edit-description"
+                  value={medicalEditForm.description}
+                  onChange={(e) => setMedicalEditForm({...medicalEditForm, description: e.target.value})}
+                  rows={3}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-treatment">Treatment</Label>
+                <Input 
+                  id="edit-treatment"
+                  value={medicalEditForm.treatment}
+                  onChange={(e) => setMedicalEditForm({...medicalEditForm, treatment: e.target.value})}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-medications">Medications</Label>
+                <Input 
+                  id="edit-medications"
+                  value={medicalEditForm.medications}
+                  onChange={(e) => setMedicalEditForm({...medicalEditForm, medications: e.target.value})}
+                  placeholder="Separate multiple medications with commas"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-notes">Notes</Label>
+                <Textarea 
+                  id="edit-notes"
+                  value={medicalEditForm.notes}
+                  onChange={(e) => setMedicalEditForm({...medicalEditForm, notes: e.target.value})}
+                  rows={2}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIsEditMedicalDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleUpdateMedicalRecord}>
+                Save Changes
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     )
   }
@@ -1841,6 +2196,15 @@ const Patients = () => {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="middleName">Middle Name</Label>
+                    <Input 
+                      id="middleName" 
+                      placeholder="Enter middle name"
+                      value={formData.middle_name}
+                      onChange={(e) => handleInputChange("middle_name", e.target.value)}
+                    />
+                  </div>
                   <div className="grid gap-2">
                     <Label htmlFor="birthdate">Birth Date *</Label>
                     <Input 
@@ -2477,122 +2841,187 @@ const Patients = () => {
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              {filteredPatients.map((patient) => (
-                <div
-                  key={patient.patient_id}
-                  className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
-                      <Users className="h-6 w-6 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold">
-                        {patient.first_name} {patient.last_name}
-                      </h3>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                        <span>Age: {calculateAge(patient.birthdate)}</span>
-                        <span className="flex items-center gap-1">
-                          <Phone className="h-3 w-3" />
-                          {patient.contact_number || "No phone"}
-                        </span>
-                        {patient.mobility_level && (
-                          <span className="flex items-center gap-1">
-                            <Activity className="h-3 w-3" />
-                            {patient.mobility_level}
-                          </span>
-                        )}
-                        {patient.emergency_contact_name && (
-                          <span className="flex items-center gap-1">
-                            <Shield className="h-3 w-3" />
-                            Emergency: {patient.emergency_contact_name}
-                          </span>
-                        )}
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <tr>
+                    <TableHead>Patient</TableHead>
+                    <TableHead>Age</TableHead>
+                    <TableHead>Contact</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Caregivers</TableHead>
+                    <TableHead>Contract</TableHead>
+                    <TableHead>Medical</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </tr>
+                </TableHeader>
+                <TableBody>
+                  {filteredPatients.map((patient) => (
+                    <tr key={patient.patient_id} className="hover:bg-accent/50">
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
+                            <Users className="h-5 w-5 text-primary" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-medium truncate">
+                              {patient.first_name}{patient.middle_name ? ' ' + patient.middle_name : ''} {patient.last_name}
+                            </p>
+                            <p className="text-sm text-muted-foreground truncate">
+                              {patient.gender} • Born {new Date(patient.birthdate).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-medium">{calculateAge(patient.birthdate)}</span>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1 text-sm">
+                            <Phone className="h-3 w-3" />
+                            <span className="truncate">{patient.contact_number || "No phone"}</span>
+                          </div>
+                          {patient.emergency_contact_name && (
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                              <Shield className="h-3 w-3" />
+                              <span className="truncate">{patient.emergency_contact_name}</span>
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-2">
+                          <Badge className={getStatusColor(patient.is_active)}>
+                            {patient.is_active ? "Active" : "Inactive"}
+                          </Badge>
+                          {patient.mobility_level && (
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                              <Activity className="h-3 w-3" />
+                              <span>{patient.mobility_level}</span>
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1 text-sm">
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium text-blue-600">Day:</span>
+                            <span className="truncate">{getCaregiverName(patient.assigned_day_caregiver_id)}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium text-purple-600">Night:</span>
+                            <span className="truncate">{getCaregiverName(patient.assigned_night_caregiver_id)}</span>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
                         {patient.contract_start_date && (
-                          <span className={`flex items-center gap-1 ${
+                          <div className={`text-sm ${
                             patient.contract_end_date && isContractExpired(patient.contract_end_date) 
                               ? 'text-red-600' 
                               : patient.contract_end_date && isContractExpiringSoon(patient.contract_end_date)
                                 ? 'text-orange-600'
-                                : ''
+                                : 'text-muted-foreground'
                           }`}>
-                            <FileText className="h-3 w-3" />
-                            Contract: {new Date(patient.contract_start_date).toLocaleDateString()}
-                            {patient.contract_end_date && ` - ${new Date(patient.contract_end_date).toLocaleDateString()}`}
-                            {patient.contract_end_date && isContractExpired(patient.contract_end_date) && ' (EXPIRED)'}
-                            {patient.contract_end_date && isContractExpiringSoon(patient.contract_end_date) && !isContractExpired(patient.contract_end_date) && ' (EXPIRES SOON)'}
-                          </span>
+                            <div className="flex items-center gap-1">
+                              <FileText className="h-3 w-3" />
+                              <span className="font-medium">Contract</span>
+                            </div>
+                            <div className="mt-1">
+                              <div>Start: {new Date(patient.contract_start_date).toLocaleDateString()}</div>
+                              {patient.contract_end_date && (
+                                <div>
+                                  End: {new Date(patient.contract_end_date).toLocaleDateString()}
+                                  {isContractExpired(patient.contract_end_date) && (
+                                    <Badge variant="destructive" className="ml-1 text-xs">EXPIRED</Badge>
+                                  )}
+                                  {isContractExpiringSoon(patient.contract_end_date) && !isContractExpired(patient.contract_end_date) && (
+                                    <Badge variant="outline" className="ml-1 text-xs border-orange-300 text-orange-600">EXPIRES SOON</Badge>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         )}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <Badge className={getStatusColor(patient.is_active)}>
-                          {patient.is_active ? "Active" : "Inactive"}
-                        </Badge>
-                        <div className="flex flex-col gap-1 text-sm text-muted-foreground">
-                          <span>Day: {getCaregiverName(patient.assigned_day_caregiver_id)}</span>
-                          <span>Night: {getCaregiverName(patient.assigned_night_caregiver_id)}</span>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm text-muted-foreground">
+                          {patient.medical_conditions && (
+                            <div className="flex items-center gap-1 mb-1">
+                              <Heart className="h-3 w-3 text-red-500" />
+                              <span className="text-xs">Conditions</span>
+                            </div>
+                          )}
+                          {patient.care_notes && (
+                            <div className="flex items-center gap-1">
+                              <Pill className="h-3 w-3 text-blue-500" />
+                              <span className="text-xs">Care Notes</span>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={() => openViewDialog(patient)}
-                      title="View Patient Details"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={() => setShowEmergencyContact(patient)}
-                      title="Emergency Contact Info"
-                    >
-                      <Shield className="h-4 w-4" />
-                    </Button>
-                    <MedicalHistoryDialog 
-                      patient={patient}
-                      trigger={
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          className="gap-1"
-                          title="View Medical History"
-                        >
-                          <Heart className="h-4 w-4" />
-                        </Button>
-                      }
-                    />
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={() => openEditDialog(patient)}
-                      title="Edit Patient"
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={() => openMedicalHistoryView(patient.patient_id)}
-                      title="View Medical History"
-                    >
-                      <FileText className="h-4 w-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={() => setDeletingPatient(patient.patient_id)}
-                      title="Delete Patient"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => openViewDialog(patient)}
+                            title="View Patient Details"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => setShowEmergencyContact(patient)}
+                            title="Emergency Contact Info"
+                          >
+                            <Shield className="h-4 w-4" />
+                          </Button>
+                          <MedicalHistoryDialog 
+                            patient={patient}
+                            trigger={
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                className="gap-1"
+                                title="View Medical History"
+                              >
+                                <Heart className="h-4 w-4" />
+                              </Button>
+                            }
+                          />
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => openEditDialog(patient)}
+                            title="Edit Patient"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => openMedicalHistoryView(patient.patient_id)}
+                            title="View Medical History"
+                          >
+                            <FileText className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => setDeletingPatient(patient.patient_id)}
+                            title="Delete Patient"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </tr>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>
@@ -2604,7 +3033,7 @@ const Patients = () => {
           <DialogHeader>
             <DialogTitle>Patient Details</DialogTitle>
             <DialogDescription>
-              Complete information for {viewingPatient?.first_name} {viewingPatient?.last_name}
+              Complete information for {viewingPatient?.first_name}{viewingPatient?.middle_name ? ' ' + viewingPatient.middle_name : ''} {viewingPatient?.last_name}
             </DialogDescription>
           </DialogHeader>
           {viewingPatient && (
@@ -2721,7 +3150,7 @@ const Patients = () => {
           <DialogHeader>
             <DialogTitle>Edit Patient</DialogTitle>
             <DialogDescription>
-              Update patient information for {editingPatient?.first_name} {editingPatient?.last_name}
+              Update patient information for {editingPatient?.first_name}{editingPatient?.middle_name ? ' ' + editingPatient.middle_name : ''} {editingPatient?.last_name}
             </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-4">

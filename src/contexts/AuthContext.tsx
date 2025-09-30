@@ -51,27 +51,44 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
           console.log("AuthProvider: Fetching user data from Firestore")
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           if (userDoc.exists()) {
+            const firestoreData = userDoc.data();
+            console.log("AuthProvider: Firestore data:", firestoreData);
             setUserData({
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
-              ...userDoc.data()
+              ...firestoreData,
+              // Ensure required fields are present
+              firstName: firestoreData.firstName || 'Unknown',
+              lastName: firestoreData.lastName || 'User',
+              role: firestoreData.role || 'user',
+              isActive: firestoreData.isActive !== undefined ? firestoreData.isActive : true
             } as UserData);
             console.log("AuthProvider: User data loaded from Firestore")
           } else {
             // If no Firestore document exists, create basic user data
             console.log("AuthProvider: No Firestore doc, using basic user data")
+            const displayNameParts = firebaseUser.displayName?.split(' ') || [];
             setUserData({
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
-              firstName: firebaseUser.displayName?.split(' ')[0] || '',
-              lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+              firstName: displayNameParts[0] || 'Unknown',
+              lastName: displayNameParts.slice(1).join(' ') || 'User',
               role: 'user',
               isActive: true
             });
           }
         } catch (error) {
           console.error('AuthProvider: Error fetching user data:', error);
-          setUserData(null);
+          // Create fallback user data even on error
+          const displayNameParts = firebaseUser.displayName?.split(' ') || [];
+          setUserData({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            firstName: displayNameParts[0] || 'Unknown',
+            lastName: displayNameParts.slice(1).join(' ') || 'User',
+            role: 'user',
+            isActive: true
+          });
         }
       } else {
         console.log("AuthProvider: No user, clearing state")

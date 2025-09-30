@@ -1,1158 +1,865 @@
-﻿import { useState, useEffect } from "react"
-import { Calendar, Clock, Users, MapPin, Phone, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Activity, RotateCcw, RefreshCw, Plus } from "lucide-react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import React, { useState, useEffect } from "react";
+import { Calendar, Plus, Clock, Edit, Trash2, CalendarDays, List, ChevronLeft, ChevronRight } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { 
+  Table, 
+  TableBody, 
+  TableCell, 
+  TableHead, 
+  TableHeader, 
+  TableRow 
+} from "@/components/ui/table";
 import { 
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
-import { useToast } from "@/hooks/use-toast"
+} from "@/components/ui/dialog";
+import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
 import { 
   Caregiver, 
-  Patient,
-  CaregiverShift,
-  canCaregiverTakeMorePatients, 
-  getAvailablePatientSlots,
-  getMaxPatientsForShift 
-} from "@/types"
-import { getCaregivers, updateCaregiver, generateMissingShiftRecords } from "@/services/firebase/caregivers"
-import { getPatients } from "@/services/firebase/patients"
+  CaregiverShift
+} from "@/types";
+import { getCaregivers } from "@/services/firebase/caregivers";
 import { 
-  addCaregiverShift,
-  updateCaregiverShift,
   getCaregiverShifts,
-  getShiftsByDateRange,
-  getCurrentShifts,
-  getCaregiverTodayShifts, 
-  getShiftsByCaregiverAndDateRange 
-} from "@/services/firebase/caregiverShifts"
-import { Timestamp } from "firebase/firestore"
-
-// Convert Firebase Timestamp to Date object
-const timestampToDateObj = (timestamp: any): Date | null => {
-  if (!timestamp) return null
-  
-  // Handle Firestore Timestamp
-  if (timestamp instanceof Timestamp) {
-    return timestamp.toDate()
-  }
-  
-  // Handle if it's already a Date object
-  if (timestamp instanceof Date) {
-    return timestamp
-  }
-  
-  // Handle if it has a toDate method (Firestore Timestamp-like object)
-  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
-    return timestamp.toDate()
-  }
-  
-  // Handle string format (fallback for legacy data)
-  if (typeof timestamp === 'string') {
-    try {
-      return new Date(timestamp)
-    } catch (e) {
-      console.warn('Could not parse timestamp:', timestamp)
-      return null
-    }
-  }
-  
-  console.warn('Unknown timestamp format:', timestamp)
-  return null
-}
-
-// Helper function to convert Firebase Timestamp to Date string
-const timestampToDate = (timestamp: any): string => {
-  if (!timestamp) return ""
-  
-  // Handle Firestore Timestamp
-  if (timestamp instanceof Timestamp) {
-    return timestamp.toDate().toISOString().split('T')[0]
-  }
-  
-  // Handle if it's already a Date object
-  if (timestamp instanceof Date) {
-    return timestamp.toISOString().split('T')[0]
-  }
-  
-  // Handle if it has a toDate method (Firestore Timestamp-like object)
-  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
-    return timestamp.toDate().toISOString().split('T')[0]
-  }
-  
-  // Handle string format (fallback for legacy data)
-  if (typeof timestamp === 'string') {
-    // If it's already in YYYY-MM-DD format, return as is
-    if (/^\d{4}-\d{2}-\d{2}$/.test(timestamp)) {
-      return timestamp
-    }
-    // Try to parse as ISO string
-    try {
-      const date = new Date(timestamp)
-      return date.toISOString().split('T')[0]
-    } catch (e) {
-      console.warn('Could not parse timestamp:', timestamp)
-      return ""
-    }
-  }
-  
-  console.warn('Unknown timestamp format:', timestamp)
-  return ""
-}
-
-// Convert date string to Firebase Timestamp
-const dateToTimestamp = (dateString: string): Timestamp => {
-  return Timestamp.fromDate(new Date(dateString))
-}
-
-// Convert time string (HH:MM) to Firebase Timestamp with today's date
-const timeToTimestamp = (timeString: string): Timestamp => {
-  const today = new Date()
-  const [hours, minutes] = timeString.split(':').map(Number)
-  today.setHours(hours, minutes, 0, 0)
-  return Timestamp.fromDate(today)
-}
-
-// Convert Timestamp to time string (HH:MM)
-const timestampToTime = (timestamp: any): string => {
-  if (!timestamp) return ""
-  
-  // Handle Firestore Timestamp
-  if (timestamp instanceof Timestamp) {
-    const date = timestamp.toDate()
-    return date.toTimeString().substring(0, 5) // HH:MM format
-  }
-  
-  // Handle if it's already a Date object
-  if (timestamp instanceof Date) {
-    return timestamp.toTimeString().substring(0, 5) // HH:MM format
-  }
-  
-  // Handle if it has a toDate method (Firestore Timestamp-like object)
-  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
-    const date = timestamp.toDate()
-    return date.toTimeString().substring(0, 5) // HH:MM format
-  }
-  
-  // Handle string format (fallback for legacy data)
-  if (typeof timestamp === 'string') {
-    // If it's already in HH:MM format, return as is
-    if (/^\d{2}:\d{2}$/.test(timestamp)) {
-      return timestamp
-    }
-    // Try to parse as ISO string
-    try {
-      const date = new Date(timestamp)
-      return date.toTimeString().substring(0, 5)
-    } catch (e) {
-      console.warn('Could not parse timestamp:', timestamp)
-      return ""
-    }
-  }
-  
-  console.warn('Unknown timestamp format:', timestamp)
-  return ""
-}
-
-// Check if a shift has ended
-const hasShiftEnded = (caregiver: Caregiver): boolean => {
-  const endDate = timestampToDateObj(caregiver.shift_end_date)
-  if (!endDate) return false
-  
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  
-  return endDate < today
-}
-
-// Check if today is the last day of a shift
-const isLastDayOfShift = (caregiver: Caregiver): boolean => {
-  const endDate = timestampToDateObj(caregiver.shift_end_date)
-  if (!endDate) return false
-  
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  endDate.setHours(0, 0, 0, 0)
-  
-  return endDate.getTime() === today.getTime()
-}
-
-// Get opposite shift type
-const getOppositeShift = (currentShift: 'Day' | 'Night'): 'Day' | 'Night' => {
-  return currentShift === 'Day' ? 'Night' : 'Day'
-}
-
-// Calculate when the next shift will start
-const getNextShiftStartDate = (caregiver: Caregiver): Date | null => {
-  const endDate = timestampToDateObj(caregiver.shift_end_date)
-  if (!endDate) return null
-  
-  const nextShiftStart = new Date(endDate)
-  
-  // Night shift caregivers get 1 day break before next shift
-  if (caregiver.shift_type === 'Night') {
-    nextShiftStart.setDate(nextShiftStart.getDate() + 2) // 1 day break + 1 day for next shift start
-  } else {
-    nextShiftStart.setDate(nextShiftStart.getDate() + 1) // Day shift starts immediately the next day
-  }
-  
-  return nextShiftStart
-}
-
-// Calculate new shift dates (4 days total: start date + 3 days)
-const calculateNewShiftDates = (isManualRotation = false, currentShiftType?: 'Day' | 'Night') => {
-  const startDate = new Date()
-  
-  if (isManualRotation) {
-    // For manual rotation, start immediately (today)
-    // Don't add a day - start the new shift right now
-  } else {
-    // For automatic rotation
-    if (currentShiftType === 'Night') {
-      // Night shift caregivers get 1 day break before next shift
-      startDate.setDate(startDate.getDate() + 2) // 1 day break + 1 day for next shift start
-    } else {
-      // Day shift starts tomorrow (no break)
-      startDate.setDate(startDate.getDate() + 1)
-    }
-  }
-  
-  const endDate = new Date(startDate)
-  endDate.setDate(endDate.getDate() + 3) // 4 days total (start date + 3 additional days)
-  
-  return {
-    startDate: startDate.toISOString().split('T')[0],
-    endDate: endDate.toISOString().split('T')[0]
-  }
-}
-
-// Get week dates starting from a given date
-const getWeekDates = (startDate: Date): Date[] => {
-  const dates = []
-  const currentDate = new Date(startDate)
-  
-  // Get the Monday of the current week
-  const dayOfWeek = currentDate.getDay()
-  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
-  currentDate.setDate(currentDate.getDate() + mondayOffset)
-  
-  for (let i = 0; i < 7; i++) {
-    dates.push(new Date(currentDate))
-    currentDate.setDate(currentDate.getDate() + 1)
-  }
-  
-  return dates
-}
-
-// Format date for display
-const formatDate = (date: Date): string => {
-  return date.toLocaleDateString('en-US', { 
-    weekday: 'short', 
-    month: 'short', 
-    day: 'numeric' 
-  })
-}
-
-// Check if caregiver has employment period covering the date (for general availability)
-const hasEmploymentOnDate = (caregiver: Caregiver, date: Date): boolean => {
-  const startDate = timestampToDate(caregiver.shift_start_date)
-  const endDate = timestampToDate(caregiver.shift_end_date)
-  
-  if (!startDate || !endDate) return false
-  
-  const dateStr = date.toISOString().split('T')[0]
-  const startDateStr = new Date(startDate).toISOString().split('T')[0]
-  const endDateStr = new Date(endDate).toISOString().split('T')[0]
-  
-  return dateStr >= startDateStr && dateStr <= endDateStr
-}
-
-// Check if caregiver is available on a specific date by examining their scheduled shifts
-const checkCaregiverAvailabilityOnDate = async (caregiverId: string, date: Date): Promise<{
-  isAvailable: boolean
-  shifts: CaregiverShift[]
-  conflictType: 'none' | 'same-day' | 'overlapping'
-}> => {
-  try {
-    const dateStr = date.toISOString().split('T')[0]
-    
-    // Get shifts for the specific date
-    const shifts = await getShiftsByCaregiverAndDateRange(caregiverId, dateStr, dateStr)
-    
-    if (shifts.length === 0) {
-      return {
-        isAvailable: true,
-        shifts: [],
-        conflictType: 'none'
-      }
-    }
-    
-    // Check for conflicts
-    const hasConflict = shifts.some(shift => {
-      // If there's any shift on this date, consider it a conflict for scheduling purposes
-      return timestampToDate(shift.shift_date) === dateStr
-    })
-    
-    return {
-      isAvailable: !hasConflict,
-      shifts: shifts,
-      conflictType: hasConflict ? 'same-day' : 'none'
-    }
-  } catch (error) {
-    console.error('Error checking caregiver availability:', error)
-    return {
-      isAvailable: false,
-      shifts: [],
-      conflictType: 'none'
-    }
-  }
-}
-
-// Check caregiver availability for today
-const checkCaregiverAvailabilityToday = async (caregiverId: string): Promise<{
-  isAvailable: boolean
-  shifts: CaregiverShift[]
-  status: 'available' | 'scheduled' | 'busy'
-}> => {
-  try {
-    const todayShifts = await getCaregiverTodayShifts(caregiverId)
-    
-    if (todayShifts.length === 0) {
-      return {
-        isAvailable: true,
-        shifts: [],
-        status: 'available'
-      }
-    }
-    
-    // Check if any shift is currently active (between start and end time)
-    const now = new Date()
-    const currentTime = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
-    
-    const activeShift = todayShifts.find(shift => {
-      const startTime = timestampToTime(shift.start_time)
-      const endTime = timestampToTime(shift.end_time)
-      return currentTime >= startTime && currentTime <= endTime
-    })
-    
-    return {
-      isAvailable: false,
-      shifts: todayShifts,
-      status: activeShift ? 'busy' : 'scheduled'
-    }
-  } catch (error) {
-    console.error('Error checking caregiver availability today:', error)
-    return {
-      isAvailable: false,
-      shifts: [],
-      status: 'available'
-    }
-  }
-}
-
-// Get availability status badge component
-const getAvailabilityBadge = (availability: { isAvailable: boolean, status: string, shifts: CaregiverShift[] }) => {
-  const getTooltipText = () => {
-    if (availability.shifts.length === 0) {
-      return "No shifts scheduled for today"
-    }
-    return availability.shifts.map(shift => 
-      `${shift.shift_type} shift: ${shift.start_time} - ${shift.end_time}`
-    ).join(', ')
-  }
-
-  switch (availability.status) {
-    case 'available':
-      return (
-        <Badge 
-          className="bg-green-100 text-green-800 border-green-300 cursor-help" 
-          title={getTooltipText()}
-        >
-          Available
-        </Badge>
-      )
-    case 'scheduled':
-      return (
-        <Badge 
-          className="bg-blue-100 text-blue-800 border-blue-300 cursor-help"
-          title={getTooltipText()}
-        >
-          Scheduled
-        </Badge>
-      )
-    case 'busy':
-      return (
-        <Badge 
-          className="bg-red-100 text-red-800 border-red-300 cursor-help"
-          title={getTooltipText()}
-        >
-          On Duty
-        </Badge>
-      )
-    default:
-      return (
-        <Badge className="bg-gray-100 text-gray-800 border-gray-300">
-          Unknown
-        </Badge>
-      )
-  }
-}
+  updateCaregiverShift,
+  deleteCaregiverShift,
+  addCaregiverShift
+} from "@/services/firebase/caregiverShifts";
+import { Timestamp } from "firebase/firestore";
 
 const Schedule = () => {
-  const [caregivers, setCaregivers] = useState<Caregiver[]>([])
-  const [patients, setPatients] = useState<Patient[]>([])
-  const [caregiverShifts, setCaregiverShifts] = useState<CaregiverShift[]>([])
-  const [currentWeek, setCurrentWeek] = useState(new Date())
-  const [viewMode, setViewMode] = useState<'week' | 'month'>('week')
-  const [selectedShift, setSelectedShift] = useState<'all' | 'Day' | 'Night'>('all')
-  const [showTemporaryOnly, setShowTemporaryOnly] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [rotatingShifts, setRotatingShifts] = useState(false)
-  const [clearingTemporary, setClearingTemporary] = useState(false)
-  const [isTemporaryScheduleOpen, setIsTemporaryScheduleOpen] = useState(false)
-  const [addingTemporarySchedule, setAddingTemporarySchedule] = useState(false)
-  const [selectedCaregiverForHistory, setSelectedCaregiverForHistory] = useState<Caregiver | null>(null)
-  const [selectedCaregiversForCalendar, setSelectedCaregiversForCalendar] = useState<string[]>([])
-  const [isShiftHistoryOpen, setIsShiftHistoryOpen] = useState(false)
-  const [showTodaySchedules, setShowTodaySchedules] = useState(false) // Add state for Today's Active Schedules visibility
-  const [caregiverAvailability, setCaregiverAvailability] = useState<Record<string, { isAvailable: boolean, status: string, shifts: CaregiverShift[] }>>({})
-  const [loadingAvailability, setLoadingAvailability] = useState(false)
-  const { toast } = useToast()
+  const [caregivers, setCaregivers] = useState<Caregiver[]>([]);
+  const [shifts, setShifts] = useState<CaregiverShift[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editingShift, setEditingShift] = useState<CaregiverShift | null>(null);
+  const [deleteCaregiver, setDeleteCaregiver] = useState<{id: string, name: string} | null>(null);
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState<'table' | 'calendar'>('table');
+  const [isViewAllDialogOpen, setIsViewAllDialogOpen] = useState(false);
+  const [selectedCaregiverShifts, setSelectedCaregiverShifts] = useState<{caregiverId: string, shifts: CaregiverShift[]}>({caregiverId: '', shifts: []});
+  const [isAutoRotationDialogOpen, setIsAutoRotationDialogOpen] = useState(false);
+  const [autoRotationSettings, setAutoRotationSettings] = useState({
+    enabled: true,
+    leadTimeHours: 4, // Hours before shift end to trigger rotation
+    rotationPattern: 'round-robin' as 'round-robin' | 'random'
+  });
+  const [editForm, setEditForm] = useState({
+    caregiverId: '',
+    date: '',
+    shiftType: '' as 'Day' | 'Night',
+    startTime: '',
+    endTime: '',
+    notes: ''
+  });
 
-  // Temporary schedule form data
-  const [tempScheduleData, setTempScheduleData] = useState({
-    caregiver_id: "",
-    start_date: "",
-    end_date: "",
-    shift_type: "" as "Day" | "Night" | "",
-    reason: ""
-  })
+  const { toast } = useToast();
 
-  const weekDates = getWeekDates(currentWeek)
-  
-  // Debug: Log the week dates being displayed
-  console.log(`ðŸ“… Calendar week dates:`, weekDates.map(d => d.toISOString().split('T')[0]))
+  // Load data on component mount
+  useEffect(() => {
+    loadData();
+  }, []);
 
-  // Function to check and generate missing shift records for caregivers
-  const checkAndGenerateMissingShiftRecords = async (caregiversData: Caregiver[], shiftsData: CaregiverShift[]) => {
-    try {
-      const caregiversWithoutShifts = caregiversData.filter(caregiver => {
-        // Check if caregiver has any shift records
-        const caregiverShifts = shiftsData.filter(shift => shift.caregiver_id === caregiver.caregiver_id)
-        return caregiverShifts.length === 0 && caregiver.shift_start_date && caregiver.shift_end_date
-      })
-      
-      if (caregiversWithoutShifts.length > 0) {
-        console.log(`ðŸ”„ Found ${caregiversWithoutShifts.length} caregivers without shift records, generating...`)
-        
-        for (const caregiver of caregiversWithoutShifts) {
-          try {
-            await generateMissingShiftRecords(caregiver.caregiver_id)
-            console.log(` Generated shift records for ${caregiver.first_name} ${caregiver.last_name}`)
-          } catch (error) {
-            console.error(` Failed to generate shift records for ${caregiver.first_name} ${caregiver.last_name}:`, error)
-          }
-        }
-        
-        // Reload shift data after generating missing records
-        console.log(' Reloading shift data after generating missing records...')
-        const updatedShifts = await getCaregiverShifts()
-        setCaregiverShifts(updatedShifts)
-        console.log(` Updated shift data: ${updatedShifts.length} total shifts`)
-      } else {
-        console.log(' All caregivers have shift records')
-      }
-    } catch (error) {
-      console.error('Error checking for missing shift records:', error)
-    }
-  }
-
-  // Automatic shift rotation check
-  const checkAndRotateExpiredShifts = async () => {
-    const expiredCaregivers = caregivers.filter(hasShiftEnded)
-    
-    if (expiredCaregivers.length === 0) return
-
-    console.log(`Auto-rotating ${expiredCaregivers.length} expired shifts...`)
-    
-    for (const caregiver of expiredCaregivers) {
-      try {
-        const newShiftType = getOppositeShift(caregiver.shift_type)
-        const { startDate, endDate } = calculateNewShiftDates(false, caregiver.shift_type) // false = automatic rotation, pass current shift type
-        const newMaxPatients = getMaxPatientsForShift(newShiftType)
-
-        const updates = {
-          shift_type: newShiftType,
-          shift_start_date: dateToTimestamp(startDate),
-          shift_end_date: dateToTimestamp(endDate),
-          max_patients: newMaxPatients,
-          updated_at: Timestamp.now()
-        }
-
-        await updateCaregiver(caregiver.caregiver_id, updates)
-        console.log(`Auto-rotated ${caregiver.first_name} ${caregiver.last_name} from ${caregiver.shift_type} to ${newShiftType}`)
-      } catch (error) {
-        console.error(`Error auto-rotating caregiver ${caregiver.caregiver_id}:`, error)
-      }
-    }
-
-    // Refresh data after auto-rotation
-    if (expiredCaregivers.length > 0) {
-      const updatedCaregiversData = await getCaregivers()
-      setCaregivers(updatedCaregiversData)
-      
-      toast({
-        title: "Automatic Shift Rotation",
-        description: `${expiredCaregivers.length} expired shifts have been automatically rotated`,
-      })
-    }
-  }
-
-  // Load caregiver availability status
-  const loadCaregiverAvailability = async (caregiverIds: string[]) => {
-    try {
-      setLoadingAvailability(true)
-      const availabilityPromises = caregiverIds.map(async (id) => {
-        const availability = await checkCaregiverAvailabilityToday(id)
-        return { id, availability }
-      })
-      
-      const results = await Promise.all(availabilityPromises)
-      const availabilityMap: Record<string, { isAvailable: boolean, status: string, shifts: CaregiverShift[] }> = {}
-      
-      results.forEach(({ id, availability }) => {
-        availabilityMap[id] = availability
-      })
-      
-      setCaregiverAvailability(availabilityMap)
-    } catch (error) {
-      console.error("Error loading caregiver availability:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load caregiver availability status",
-        variant: "destructive"
-      })
-    } finally {
-      setLoadingAvailability(false)
-    }
-  }
-
-  // Load caregivers, patients, and shifts data
   const loadData = async () => {
     try {
-      setLoading(true)
-      console.log(' Schedule: Loading data...')
-      const [caregiversData, patientsData, shiftsData] = await Promise.all([
+      setLoading(true);
+      const [caregiversData, shiftsData] = await Promise.all([
         getCaregivers(),
-        getPatients(),
         getCaregiverShifts()
-      ])
-      setCaregivers(caregiversData)
-      setPatients(patientsData)
-      setCaregiverShifts(shiftsData)
+      ]);
       
-      console.log(' Schedule: Data loaded successfully', {
-        caregivers: caregiversData.length,
-        patients: patientsData.length,
-        shifts: shiftsData.length
-      })
-      
-      // Debug logging for loaded shifts
-      console.log(` Loaded data:`, {
-        caregivers: caregiversData.length,
-        patients: patientsData.length,
-        shifts: shiftsData.length,
-        shiftSample: shiftsData.slice(0, 3).map(s => {
-          try {
-            return {
-              caregiver_id: s.caregiver_id,
-              shift_date: timestampToDate(s.shift_date),
-              shift_type: s.shift_type,
-              start_time: timestampToTime(s.start_time),
-              end_time: timestampToTime(s.end_time),
-              raw_start_time: s.start_time,
-              raw_end_time: s.end_time
-            }
-          } catch (error) {
-            console.error('Error processing shift:', s, error)
-            return {
-              caregiver_id: s.caregiver_id,
-              error: 'Failed to process shift data'
-            }
-          }
-        })
-      })
-      
-      // Load caregiver availability after loading caregivers
-      if (caregiversData.length > 0) {
-        const caregiverIds = caregiversData.map(c => c.caregiver_id)
-        await loadCaregiverAvailability(caregiverIds)
-        
-        // Check for caregivers without shift records and generate them
-        await checkAndGenerateMissingShiftRecords(caregiversData, shiftsData)
-      }
-      
-      // Check for expired shifts after loading data
-      setTimeout(() => {
-        if (caregiversData.length > 0) {
-          checkAndRotateExpiredShifts()
-        }
-      }, 1000)
+      setCaregivers(caregiversData);
+      setShifts(shiftsData);
     } catch (error) {
-      console.error("Error loading schedule data:", error)
+      console.error('Error loading data:', error);
       toast({
         title: "Error",
-        description: "Failed to load caregiver schedules. Please try again.",
-        variant: "destructive"
-      })
+        description: "Failed to load schedule data",
+        variant: "destructive",
+      });
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  useEffect(() => {
-    loadData()
-  }, [toast])
-
-  // Refresh data manually
-  const refreshData = async () => {
-    toast({
-      title: "Refreshing data...",
-      description: "Loading latest schedule information."
-    })
-    await loadData()
-    toast({
-      title: "Data refreshed",
-      description: "Schedule information has been updated."
-    })
-  }
-
-  // Refresh only availability status
-  const refreshAvailability = async () => {
-    if (caregivers.length > 0) {
-      const caregiverIds = caregivers.map(c => c.caregiver_id)
-      await loadCaregiverAvailability(caregiverIds)
-      toast({
-        title: "Availability Updated",
-        description: "Caregiver availability status has been refreshed."
-      })
-    }
-  }
-
-  // Auto-rotation timer - check every 30 seconds
-  useEffect(() => {
-    if (caregivers.length === 0) return
-
-    const autoRotationInterval = setInterval(() => {
-      checkAndRotateExpiredShifts()
-    }, 30000) // Check every 30 seconds
-
-    return () => clearInterval(autoRotationInterval)
-  }, [caregivers])
-
-  // Filter caregivers based on selected shift and temporary schedule status
-  const filteredCaregivers = caregivers.filter(caregiver => {
-    // Filter by shift type
-    const shiftMatch = selectedShift === 'all' || caregiver.shift_type === selectedShift
+  // Simple function to get next shift for a caregiver
+  const getNextShiftForCaregiver = (caregiverId: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     
-    // Filter by temporary schedule status
-    const tempMatch = !showTemporaryOnly || !!caregiver.temporary_schedule_reason
+    // Get caregiver's future shifts sorted by date
+    const futureShifts = shifts
+      .filter(shift => 
+        shift.caregiver_id === caregiverId && 
+        shift.shift_date.toDate() > today
+      )
+      .sort((a, b) => a.shift_date.toDate().getTime() - b.shift_date.toDate().getTime());
     
-    return shiftMatch && tempMatch
-  })
-
-  // Navigate weeks
-  const goToPreviousWeek = () => {
-    const newDate = new Date(currentWeek)
-    newDate.setDate(newDate.getDate() - 7)
-    setCurrentWeek(newDate)
-  }
-
-  const goToNextWeek = () => {
-    const newDate = new Date(currentWeek)
-    newDate.setDate(newDate.getDate() + 7)
-    setCurrentWeek(newDate)
-  }
-
-  const goToToday = () => {
-    setCurrentWeek(new Date())
-  }
-
-  const getShiftColor = (shiftType: string) => {
-    return shiftType === 'Day' 
-      ? "bg-yellow-100 text-yellow-800 border-yellow-200"
-      : "bg-blue-100 text-blue-800 border-blue-200"
-  }
-
-  const getShiftTimes = (shiftType: string) => {
-    return shiftType === 'Day' ? '7AM - 7PM' : '7PM - 7AM'
-  }
-
-  // Get shift records for a caregiver for a specific date
-  const getCaregiverShiftsForDate = (caregiverId: string, date: string): CaregiverShift[] => {
-    return caregiverShifts.filter(shift => 
-      shift.caregiver_id === caregiverId && timestampToDate(shift.shift_date) === date
-    )
-  }
-
-  // Check if caregiver has shift on specific date - checks for actual shift records
-  const hasShiftOnDate = (caregiver: Caregiver, date: Date): boolean => {
-    // Check if caregiver has actual shifts for the specific date
-    const dateStr = date.toISOString().split('T')[0]
-    const caregiverTodayShifts = caregiverShifts.filter(shift => {
-      if (shift.caregiver_id !== caregiver.caregiver_id) return false
-      
-      // Convert Timestamp to date string for comparison
-      const shiftDateStr = timestampToDate(shift.shift_date)
-      return shiftDateStr === dateStr
-    })
-    
-    // Enhanced debug logging
-    console.log(` Checking ${caregiver.first_name} ${caregiver.last_name} for date ${dateStr}:`, {
-      totalShifts: caregiverShifts.filter(s => s.caregiver_id === caregiver.caregiver_id).length,
-      shiftsOnDate: caregiverTodayShifts.length,
-      shiftDates: caregiverShifts
-        .filter(s => s.caregiver_id === caregiver.caregiver_id)
-        .map(s => timestampToDate(s.shift_date))
-        .slice(0, 5) // Show first 5 dates
-    })
-    
-    if (caregiverTodayShifts.length > 0) {
-      console.log(` ${caregiver.first_name} ${caregiver.last_name} has ${caregiverTodayShifts.length} shift(s) on ${dateStr}`)
+    if (futureShifts.length === 0) {
+      return null;
     }
     
-    return caregiverTodayShifts.length > 0
-  }
+    const nextShift = futureShifts[0];
+    return {
+      date: nextShift.shift_date.toDate(),
+      shiftType: nextShift.shift_type,
+      isUpcoming: true,
+      isScheduled: true
+    };
+  };
 
-  // Get recent shifts for a caregiver (last 7 days)
-  const getRecentShiftsForCaregiver = (caregiverId: string): CaregiverShift[] => {
-    const today = new Date()
-    const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
+  // Function to get current shift for a caregiver
+  const getCurrentShiftForCaregiver = (caregiverId: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
     
-    return caregiverShifts
+    // Get caregiver's current shifts (today and ongoing)
+    const currentShifts = shifts
       .filter(shift => {
-        const shiftDate = timestampToDateObj(shift.shift_date)
+        const shiftDate = shift.shift_date.toDate();
+        const shiftEnd = shift.end_time instanceof Timestamp ? shift.end_time.toDate() : new Date(shift.end_time);
         return shift.caregiver_id === caregiverId && 
-               shiftDate && shiftDate >= sevenDaysAgo && 
-               shiftDate <= today
+               shiftDate <= today && 
+               shiftEnd > today;
       })
-      .sort((a, b) => {
-        const dateA = timestampToDateObj(b.shift_date)
-        const dateB = timestampToDateObj(a.shift_date)
-        return (dateA?.getTime() || 0) - (dateB?.getTime() || 0)
-      })
-  }
+      .sort((a, b) => a.shift_date.toDate().getTime() - b.shift_date.toDate().getTime());
+    
+    if (currentShifts.length === 0) {
+      return null;
+    }
+    
+    return currentShifts[0];
+  };
 
-  // Get all shifts for a caregiver (for history view)
-  const getAllShiftsForCaregiver = (caregiverId: string): CaregiverShift[] => {
-    return caregiverShifts
+  // Helper function to convert Timestamp to Date safely
+  const timestampToDate = (timestamp: any): Date => {
+    if (timestamp instanceof Timestamp) {
+      return timestamp.toDate();
+    } else if (timestamp instanceof Date) {
+      return timestamp;
+    } else {
+      return new Date(timestamp);
+    }
+  };
+
+  // Function to get shift periods (group consecutive shifts of same type)
+  const getShiftPeriods = (caregiverId: string) => {
+    // Use all shifts for period calculation (we need to see the full timeline to determine periods)
+    // but the display logic will filter what's shown
+    const caregiverShifts = shifts
       .filter(shift => shift.caregiver_id === caregiverId)
-      .sort((a, b) => {
-        const dateA = timestampToDateObj(b.shift_date)
-        const dateB = timestampToDateObj(a.shift_date)
-        return (dateA?.getTime() || 0) - (dateB?.getTime() || 0)
-      })
-  }
+      .sort((a, b) => a.shift_date.toDate().getTime() - b.shift_date.toDate().getTime());
 
-  // Open shift history modal
-  const openShiftHistory = (caregiver: Caregiver) => {
-    setSelectedCaregiverForHistory(caregiver)
-    setIsShiftHistoryOpen(true)
-  }
+    if (caregiverShifts.length === 0) return { current: null, next: null };
 
-  // Get assigned patients for a caregiver based on their shift
-  const getAssignedPatients = (caregiverId: string, shiftType?: string): Patient[] => {
-    return patients.filter(patient => {
-      // If shift type is specified, check only for that shift
-      if (shiftType) {
-        if (shiftType === 'Day') {
-          return patient.assigned_day_caregiver_id === caregiverId
-        } else if (shiftType === 'Night') {
-          return patient.assigned_night_caregiver_id === caregiverId
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const now = new Date(); // Keep current time for precise period detection
+
+    // Find current period
+    let currentPeriod = null;
+    let nextPeriod = null;
+
+    // Group consecutive shifts of the same type
+    const periods: Array<{
+      type: 'Day' | 'Night';
+      startDate: Date;
+      endDate: Date;
+      shifts: CaregiverShift[];
+      isCurrent: boolean;
+      isNext: boolean;
+    }> = [];
+
+    let currentGroup: CaregiverShift[] = [];
+    let currentType: 'Day' | 'Night' | null = null;
+
+    for (const shift of caregiverShifts) {
+      if (shift.shift_type !== currentType) {
+        // Save previous group
+        if (currentGroup.length > 0 && currentType) {
+          const startDate = currentGroup[0].shift_date.toDate();
+          // Use the actual end time of the last shift in the period
+          const lastShift = currentGroup[currentGroup.length - 1];
+          const endTime = timestampToDate(lastShift.end_time);
+          
+          // For more accurate current period detection, compare with actual timestamps
+          const periodStartTime = timestampToDate(currentGroup[0].start_time);
+          
+          periods.push({
+            type: currentType,
+            startDate,
+            endDate: endTime,
+            shifts: [...currentGroup],
+            isCurrent: periodStartTime <= now && endTime > now,
+            isNext: false
+          });
         }
-      }
-      
-      // If no shift type specified, check if this caregiver is assigned to the patient for any shift
-      return patient.assigned_day_caregiver_id === caregiverId || 
-             patient.assigned_night_caregiver_id === caregiverId ||
-             patient.assigned_caregiver_id === caregiverId // backward compatibility
-    })
-  }
-
-  // Rotate shift for a single caregiver
-  const rotateCaregiver = async (caregiver: Caregiver, isManualRotation = false) => {
-    try {
-      const newShiftType = getOppositeShift(caregiver.shift_type)
-      const newMaxPatients = getMaxPatientsForShift(newShiftType)
-
-      let updates: any = {
-        shift_type: newShiftType,
-        max_patients: newMaxPatients,
-        updated_at: Timestamp.now()
-      }
-
-      let shiftStartDate: string, shiftEndDate: string
-
-      // Only change dates for automatic rotation, keep existing dates for manual rotation
-      if (!isManualRotation) {
-        const { startDate, endDate } = calculateNewShiftDates(false, caregiver.shift_type)
-        updates.shift_start_date = dateToTimestamp(startDate)
-        updates.shift_end_date = dateToTimestamp(endDate)
-        shiftStartDate = startDate
-        shiftEndDate = endDate
+        
+        // Start new group
+        currentGroup = [shift];
+        currentType = shift.shift_type;
       } else {
-        // For manual rotation, use existing dates or default to today + 7 days
-        shiftStartDate = timestampToDate(caregiver.shift_start_date) || new Date().toISOString().split('T')[0]
-        shiftEndDate = timestampToDate(caregiver.shift_end_date) || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-      }
-
-      // Create shift records for the new schedule
-      const startDate = new Date(shiftStartDate)
-      const endDate = new Date(shiftEndDate)
-      const shiftRecords: Promise<string>[] = []
-
-      // Calculate shift times based on new shift type
-      const { startTimeStr, endTimeStr } = newShiftType === 'Day' 
-        ? { startTimeStr: '07:00', endTimeStr: '19:00' }
-        : { startTimeStr: '19:00', endTimeStr: '07:00' }
-
-      // Create shift records for each day in the range
-      for (let date = new Date(startDate); date <= endDate; date.setDate(date.getDate() + 1)) {
-        const shiftData = {
-          caregiver_id: caregiver.caregiver_id,
-          shift_date: Timestamp.fromDate(new Date(date)),
-          shift_type: newShiftType,
-          start_time: timeToTimestamp(startTimeStr),
-          end_time: timeToTimestamp(endTimeStr),
-          notes: isManualRotation ? "Manual shift rotation" : "Automatic shift rotation",
-          created_at: Timestamp.now(),
-          updated_at: Timestamp.now()
-        }
-        
-        shiftRecords.push(addCaregiverShift(shiftData))
-      }
-
-      // Wait for shift records and caregiver update
-      await Promise.all([
-        ...shiftRecords,
-        updateCaregiver(caregiver.caregiver_id, updates)
-      ])
-
-      toast({
-        title: "Shift Rotated",
-        description: `${caregiver.first_name} ${caregiver.last_name} moved from ${caregiver.shift_type} to ${newShiftType} shift${isManualRotation ? ' (keeping current schedule)' : ''}`,
-      })
-
-      return true
-    } catch (error) {
-      console.error("Error rotating caregiver shift:", error)
-      toast({
-        title: "Error",
-        description: `Failed to rotate shift for ${caregiver.first_name} ${caregiver.last_name}`,
-        variant: "destructive"
-      })
-      return false
-    }
-  }
-
-  // Auto-rotate expired shifts
-  const autoRotateExpiredShifts = async () => {
-    const expiredCaregivers = caregivers.filter(hasShiftEnded)
-    
-    if (expiredCaregivers.length === 0) {
-      toast({
-        title: "No Expired Shifts",
-        description: "All caregiver shifts are still active",
-      })
-      return
-    }
-
-    setRotatingShifts(true)
-    let successCount = 0
-    
-    for (const caregiver of expiredCaregivers) {
-      const success = await rotateCaregiver(caregiver, false) // false = automatic rotation
-      if (success) successCount++
-    }
-
-    // Refresh caregiver data
-    try {
-      await loadData()
-    } catch (error) {
-      console.error("Error refreshing data:", error)
-    }
-
-    setRotatingShifts(false)
-
-    if (successCount > 0) {
-      toast({
-        title: "Shifts Rotated",
-        description: `Successfully rotated ${successCount} expired shifts`,
-      })
-    }
-  }
-
-  // Manual rotate single caregiver
-  const manualRotateCaregiver = async (caregiver: Caregiver) => {
-    setRotatingShifts(true)
-    const success = await rotateCaregiver(caregiver, true) // true = manual rotation
-    
-    if (success) {
-      try {
-        await loadData()
-      } catch (error) {
-        console.error("Error refreshing data:", error)
-      }
-    }
-    
-    setRotatingShifts(false)
-  }
-
-  // Handle temporary schedule form input changes
-  const handleTempScheduleInputChange = (field: string, value: string) => {
-    setTempScheduleData(prev => ({ ...prev, [field]: value }))
-  }
-
-  // Reset temporary schedule form
-  const resetTempScheduleForm = () => {
-    setTempScheduleData({
-      caregiver_id: "",
-      start_date: "",
-      end_date: "",
-      shift_type: "" as "Day" | "Night" | "",
-      reason: ""
-    })
-  }
-
-  // Restore original schedule for caregiver
-  const restoreOriginalSchedule = async (caregiver: Caregiver) => {
-    if (!caregiver.original_shift_type) {
-      toast({
-        title: "Error",
-        description: "No original schedule found for this caregiver",
-        variant: "destructive"
-      })
-      return
-    }
-
-    try {
-      setRotatingShifts(true)
-
-      const maxPatients = getMaxPatientsForShift(caregiver.original_shift_type)
-
-      const updates = {
-        shift_type: caregiver.original_shift_type,
-        shift_start_date: caregiver.original_shift_start_date,
-        shift_end_date: caregiver.original_shift_end_date,
-        max_patients: maxPatients,
-        updated_at: Timestamp.now(),
-        // Clear temporary schedule fields
-        temporary_schedule_reason: null,
-        original_shift_type: null,
-        original_shift_start_date: null,
-        original_shift_end_date: null
-      }
-
-      await updateCaregiver(caregiver.caregiver_id, updates)
-      
-      // Refresh caregivers data
-      const updatedCaregiversData = await getCaregivers()
-      setCaregivers(updatedCaregiversData)
-      
-      toast({
-        title: "Success",
-        description: `${caregiver.first_name} ${caregiver.last_name} has been restored to their original schedule`,
-      })
-      
-    } catch (error) {
-      console.error("Error restoring original schedule:", error)
-      toast({
-        title: "Error",
-        description: "Failed to restore original schedule",
-        variant: "destructive"
-      })
-    } finally {
-      setRotatingShifts(false)
-    }
-  }
-
-  // Clear all temporary schedules
-  const clearAllTemporarySchedules = async () => {
-    const caregiversWithTemporary = caregivers.filter(c => c.temporary_schedule_reason)
-    
-    if (caregiversWithTemporary.length === 0) {
-      toast({
-        title: "No Temporary Schedules",
-        description: "There are no temporary schedules to clear",
-      })
-      return
-    }
-
-    try {
-      setClearingTemporary(true)
-      
-      let successCount = 0
-      
-      for (const caregiver of caregiversWithTemporary) {
-        try {
-          if (caregiver.original_shift_type) {
-            const maxPatients = getMaxPatientsForShift(caregiver.original_shift_type)
-
-            const updates = {
-              shift_type: caregiver.original_shift_type,
-              shift_start_date: caregiver.original_shift_start_date,
-              shift_end_date: caregiver.original_shift_end_date,
-              max_patients: maxPatients,
-              updated_at: Timestamp.now(),
-              // Clear temporary schedule fields
-              temporary_schedule_reason: null,
-              original_shift_type: null,
-              original_shift_start_date: null,
-              original_shift_end_date: null
+        // Check if this shift is consecutive (within 1 day of the last shift)
+        if (currentGroup.length > 0) {
+          const lastShiftDate = currentGroup[currentGroup.length - 1].shift_date.toDate();
+          const currentShiftDate = shift.shift_date.toDate();
+          const daysDiff = Math.abs((currentShiftDate.getTime() - lastShiftDate.getTime()) / (1000 * 60 * 60 * 24));
+          
+          if (daysDiff <= 1) {
+            currentGroup.push(shift);
+          } else {
+            // Gap detected, save current group and start new one
+            if (currentType) {
+              const startDate = currentGroup[0].shift_date.toDate();
+              const lastShift = currentGroup[currentGroup.length - 1];
+              const endTime = timestampToDate(lastShift.end_time);
+              const periodStartTime = timestampToDate(currentGroup[0].start_time);
+              
+              periods.push({
+                type: currentType,
+                startDate,
+                endDate: endTime,
+                shifts: [...currentGroup],
+                isCurrent: periodStartTime <= now && endTime > now,
+                isNext: false
+              });
             }
-
-            await updateCaregiver(caregiver.caregiver_id, updates)
-            successCount++
+            
+            // Start new group with current shift
+            currentGroup = [shift];
           }
-        } catch (error) {
-          console.error(`Error clearing temporary schedule for ${caregiver.first_name} ${caregiver.last_name}:`, error)
+        } else {
+          currentGroup.push(shift);
         }
       }
-
-      // Refresh caregivers data
-      const updatedCaregiversData = await getCaregivers()
-      setCaregivers(updatedCaregiversData)
-      
-      toast({
-        title: "Success",
-        description: `Cleared ${successCount} temporary schedules and restored original assignments`,
-      })
-      
-    } catch (error) {
-      console.error("Error clearing temporary schedules:", error)
-      toast({
-        title: "Error",
-        description: "Failed to clear some temporary schedules",
-        variant: "destructive"
-      })
-    } finally {
-      setClearingTemporary(false)
     }
-  }
 
-  // Handle temporary schedule creation
-  const handleAddTemporarySchedule = async () => {
-    if (!tempScheduleData.caregiver_id || !tempScheduleData.start_date || !tempScheduleData.end_date || !tempScheduleData.shift_type) {
-      toast({
-        title: "Error",
-        description: "Please fill in all required fields",
-        variant: "destructive"
-      })
-      return
+    // Don't forget the last group
+    if (currentGroup.length > 0 && currentType) {
+      const startDate = currentGroup[0].shift_date.toDate();
+      const lastShift = currentGroup[currentGroup.length - 1];
+      const endTime = timestampToDate(lastShift.end_time);
+      const periodStartTime = timestampToDate(currentGroup[0].start_time);
+      
+      periods.push({
+        type: currentType,
+        startDate,
+        endDate: endTime,
+        shifts: [...currentGroup],
+        isCurrent: periodStartTime <= now && endTime > now,
+        isNext: false
+      });
+    }
+
+    // Sort periods by start date
+    periods.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+
+    // Find current and next periods with improved logic
+    const currentPeriodIndex = periods.findIndex(p => p.isCurrent);
+    
+    if (currentPeriodIndex >= 0) {
+      currentPeriod = periods[currentPeriodIndex];
+      // Look for next period after current
+      const nextPeriodIndex = periods.findIndex((p, index) => 
+        index > currentPeriodIndex && p.startDate > currentPeriod!.endDate
+      );
+      if (nextPeriodIndex >= 0) {
+        nextPeriod = periods[nextPeriodIndex];
+        nextPeriod.isNext = true;
+      }
+    } else {
+      // If no current period, find the next upcoming one
+      const upcomingPeriods = periods.filter(p => p.startDate > now);
+      if (upcomingPeriods.length > 0) {
+        nextPeriod = upcomingPeriods[0];
+        nextPeriod.isNext = true;
+      }
+      
+      // Also check if there's a period that should be current but wasn't detected
+      // (in case of edge cases with time comparison)
+      const potentialCurrent = periods.find(p => {
+        const dayOnly = new Date(p.startDate);
+        dayOnly.setHours(0, 0, 0, 0);
+        const endDayOnly = new Date(p.endDate);
+        endDayOnly.setHours(23, 59, 59, 999);
+        return dayOnly <= today && endDayOnly >= today;
+      });
+      
+      if (potentialCurrent && !currentPeriod) {
+        currentPeriod = potentialCurrent;
+        currentPeriod.isCurrent = true;
+        
+        // Re-find next period
+        const currentIndex = periods.indexOf(currentPeriod);
+        const nextIndex = periods.findIndex((p, index) => 
+          index > currentIndex && p.startDate > currentPeriod!.endDate
+        );
+        if (nextIndex >= 0) {
+          nextPeriod = periods[nextIndex];
+          nextPeriod.isNext = true;
+        }
+      }
+    }
+
+    return { current: currentPeriod, next: nextPeriod, allPeriods: periods };
+  };
+
+  // Function to group shifts by caregiver
+  // Helper function to find the next caregiver who will take over after a period ends
+  const findNextCaregiverForDate = (date: Date, excludeCaregiverId: string) => {
+    // Look for any caregiver who has a next period starting around this date
+    const nextDay = new Date(date);
+    nextDay.setDate(date.getDate() + 1);
+    
+    for (const caregiver of caregivers) {
+      if (caregiver.caregiver_id === excludeCaregiverId) continue;
+      
+      const { next } = getShiftPeriods(caregiver.caregiver_id);
+      if (next && 
+          next.startDate.getTime() >= date.getTime() && 
+          next.startDate.getTime() <= nextDay.getTime()) {
+        return {
+          caregiverId: caregiver.caregiver_id,
+          shiftType: next.type,
+          startDate: next.startDate
+        };
+      }
+    }
+    
+    return null;
+  };
+
+  // Central function to filter only relevant shifts (current and next periods + recent past)
+  const getRelevantShifts = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    return shifts.filter(shift => {
+      const shiftDate = shift.shift_date.toDate();
+      const { current, next } = getShiftPeriods(shift.caregiver_id);
+      
+      // Always show shift if it's part of current period
+      if (current && shiftDate >= current.startDate && shiftDate <= current.endDate) {
+        return true;
+      }
+      
+      // Always show shift if it's part of next period
+      if (next && shiftDate >= next.startDate && shiftDate <= next.endDate) {
+        return true;
+      }
+      
+      // Show recent past shifts (within 3 days) for context
+      const daysDiff = Math.floor((today.getTime() - shiftDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysDiff >= 0 && daysDiff <= 3) {
+        return true;
+      }
+      
+      // Hide all other shifts (old past periods, future periods beyond next)
+      return false;
+    });
+  };
+
+  const getGroupedShifts = () => {
+    const grouped = new Map<string, CaregiverShift[]>();
+    
+    // Use only relevant shifts instead of all shifts
+    const relevantShifts = getRelevantShifts();
+    
+    // Sort shifts by date first
+    const sortedShifts = [...relevantShifts].sort((a, b) => 
+      a.shift_date.toDate().getTime() - b.shift_date.toDate().getTime()
+    );
+    
+    sortedShifts.forEach(shift => {
+      const caregiverId = shift.caregiver_id;
+      if (!grouped.has(caregiverId)) {
+        grouped.set(caregiverId, []);
+      }
+      grouped.get(caregiverId)!.push(shift);
+    });
+    
+    return Array.from(grouped.entries()).map(([caregiverId, caregiverShifts]) => ({
+      caregiverId,
+      shifts: caregiverShifts
+    }));
+  };
+
+  // Auto-rotation functions
+  const isShiftAboutToEnd = (shift: CaregiverShift) => {
+    if (!autoRotationSettings.enabled) return false;
+    
+    const now = new Date();
+    const shiftEndTime = shift.end_time instanceof Timestamp ? shift.end_time.toDate() : new Date(shift.end_time);
+    const leadTimeMs = autoRotationSettings.leadTimeHours * 60 * 60 * 1000;
+    const rotationTriggerTime = new Date(shiftEndTime.getTime() - leadTimeMs);
+    
+    return now >= rotationTriggerTime && now < shiftEndTime;
+  };
+
+  const isShiftPeriodAboutToEnd = (caregiverId: string) => {
+    const { current } = getShiftPeriods(caregiverId);
+    if (!current || !autoRotationSettings.enabled) return false;
+    
+    const now = new Date();
+    const periodEndTime = current.endDate;
+    
+    // Check if the period ends within the next 24 hours
+    const hoursUntilEnd = (periodEndTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+    const leadTimeHours = autoRotationSettings.leadTimeHours || 24; // Default to 24 hours if not set
+    
+    return hoursUntilEnd > 0 && hoursUntilEnd <= leadTimeHours;
+  };
+
+  // Helper function to check if a period is currently active
+  const isPeriodActive = (period: any) => {
+    const now = new Date();
+    return period.startDate <= now && period.endDate > now;
+  };
+
+  // Helper function to get the most accurate current period
+  const getCurrentActivePeriod = (caregiverId: string) => {
+    const { current, allPeriods } = getShiftPeriods(caregiverId);
+    
+    // Double-check if the detected current period is actually active
+    if (current && isPeriodActive(current)) {
+      return current;
+    }
+    
+    // If not, search through all periods for an active one
+    if (allPeriods) {
+      const activePeriod = allPeriods.find(period => isPeriodActive(period));
+      return activePeriod || null;
+    }
+    
+    return null;
+  };
+
+  const getNextCaregiverForRotation = (currentCaregiverId: string) => {
+    const availableCaregivers = caregivers.filter(c => c.caregiver_id !== currentCaregiverId);
+    
+    if (availableCaregivers.length === 0) return null;
+    
+    if (autoRotationSettings.rotationPattern === 'round-robin') {
+      // Find the next caregiver in alphabetical order
+      const sortedCaregivers = availableCaregivers.sort((a, b) => 
+        `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`)
+      );
+      return sortedCaregivers[0];
+    } else {
+      // Random selection
+      const randomIndex = Math.floor(Math.random() * availableCaregivers.length);
+      return availableCaregivers[randomIndex];
+    }
+  };
+
+  const generateInitialShiftPeriod = async (caregiverId: string) => {
+    const caregiver = caregivers.find(c => c.caregiver_id === caregiverId);
+    if (!caregiver) return null;
+
+    // Start from today
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Default to Day shift for initial period
+    const shiftType = 'Day';
+    const shiftDuration = 4; // 4 days per period
+    
+    const newShifts = [];
+    
+    for (let i = 0; i < shiftDuration; i++) {
+      const shiftDate = new Date(today);
+      shiftDate.setDate(today.getDate() + i);
+      
+      // Set shift times based on type
+      const startTime = new Date(shiftDate);
+      const endTime = new Date(shiftDate);
+      
+      if (shiftType === 'Day') {
+        startTime.setHours(7, 0, 0, 0); // 7 AM
+        endTime.setHours(19, 0, 0, 0);  // 7 PM
+      } else {
+        startTime.setHours(19, 0, 0, 0); // 7 PM
+        endTime.setDate(endTime.getDate() + 1); // Next day
+        endTime.setHours(7, 0, 0, 0);   // 7 AM next day
+      }
+
+      const newShift = {
+        caregiver_id: caregiverId,
+        shift_date: Timestamp.fromDate(shiftDate),
+        shift_type: shiftType,
+        start_time: Timestamp.fromDate(startTime),
+        end_time: Timestamp.fromDate(endTime),
+        notes: `Auto-generated initial ${shiftType} shift period (${i + 1}/4)`,
+        created_at: Timestamp.now(),
+        updated_at: Timestamp.now()
+      };
+
+      newShifts.push(newShift);
     }
 
     try {
-      setAddingTemporarySchedule(true)
+      // Add all shifts in the period
+      for (const shift of newShifts) {
+        await addCaregiverShift(shift);
+      }
       
-      // Find the selected caregiver
-      const selectedCaregiver = caregivers.find(c => c.caregiver_id === tempScheduleData.caregiver_id)
-      if (!selectedCaregiver) {
-        throw new Error("Selected caregiver not found")
+      return {
+        caregiverId: caregiverId,
+        shiftType: shiftType,
+        startDate: today,
+        endDate: new Date(today.getTime() + (shiftDuration * 24 * 60 * 60 * 1000)),
+        shiftsCount: newShifts.length
+      };
+    } catch (error) {
+      console.error('Error creating initial shift period:', error);
+      return null;
+    }
+  };
+
+  const generateNextShiftPeriod = async (currentCaregiverId: string) => {
+    const { current } = getShiftPeriods(currentCaregiverId);
+    if (!current) return null;
+
+    const nextCaregiver = getNextCaregiverForRotation(currentCaregiverId);
+    if (!nextCaregiver) return null;
+
+    // Generate 4-day shift period starting after current period ends
+    const nextPeriodStart = new Date(current.endDate);
+    const nextShiftType = current.type === 'Day' ? 'Night' : 'Day';
+    const shiftDuration = 4; // 4 days per period
+    
+    const newShifts = [];
+    
+    for (let i = 0; i < shiftDuration; i++) {
+      const shiftDate = new Date(nextPeriodStart);
+      shiftDate.setDate(nextPeriodStart.getDate() + i);
+      
+      // Set shift times based on type
+      const startTime = new Date(shiftDate);
+      const endTime = new Date(shiftDate);
+      
+      if (nextShiftType === 'Day') {
+        startTime.setHours(7, 0, 0, 0); // 7 AM
+        endTime.setHours(19, 0, 0, 0);  // 7 PM
+      } else {
+        startTime.setHours(19, 0, 0, 0); // 7 PM
+        endTime.setDate(endTime.getDate() + 1); // Next day
+        endTime.setHours(7, 0, 0, 0);   // 7 AM next day
       }
 
-      // Calculate max patients for the selected shift type
-      const maxPatients = getMaxPatientsForShift(tempScheduleData.shift_type)
+      const newShift = {
+        caregiver_id: nextCaregiver.caregiver_id,
+        shift_date: Timestamp.fromDate(shiftDate),
+        shift_type: nextShiftType,
+        start_time: Timestamp.fromDate(startTime),
+        end_time: Timestamp.fromDate(endTime),
+        notes: `Auto-generated ${nextShiftType} shift period (${i + 1}/4) - rotation from ${getCaregiverName(currentCaregiverId)}`,
+        created_at: Timestamp.now(),
+        updated_at: Timestamp.now()
+      };
 
-      // Create detailed shift records for each day in the date range
-      const startDate = new Date(tempScheduleData.start_date)
-      const endDate = new Date(tempScheduleData.end_date)
-      const shiftRecords: Promise<string>[] = []
+      newShifts.push(newShift);
+    }
 
-      // Calculate shift times based on shift type
-      const { startTimeStr, endTimeStr } = tempScheduleData.shift_type === 'Day' 
-        ? { startTimeStr: '07:00', endTimeStr: '19:00' }
-        : { startTimeStr: '19:00', endTimeStr: '07:00' }
+    try {
+      // Add all shifts in the period
+      for (const shift of newShifts) {
+        await addCaregiverShift(shift);
+      }
+      
+      return {
+        caregiverId: nextCaregiver.caregiver_id,
+        shiftType: nextShiftType,
+        startDate: nextPeriodStart,
+        endDate: new Date(nextPeriodStart.getTime() + (shiftDuration * 24 * 60 * 60 * 1000)),
+        shiftsCount: newShifts.length
+      };
+    } catch (error) {
+      console.error('Error creating auto-rotation shift period:', error);
+      return null;
+    }
+  };
 
-      // Create shift records for each day in the range
-      for (let date = new Date(startDate); date <= endDate; date.setDate(date.getDate() + 1)) {
-        const shiftData = {
-          caregiver_id: tempScheduleData.caregiver_id,
-          shift_date: Timestamp.fromDate(new Date(date)),
-          shift_type: tempScheduleData.shift_type,
-          start_time: timeToTimestamp(startTimeStr),
-          end_time: timeToTimestamp(endTimeStr),
-          notes: tempScheduleData.reason || "Temporary schedule assignment",
-          created_at: Timestamp.now(),
-          updated_at: Timestamp.now()
-        }
+  const checkAndProcessAutoRotations = async () => {
+    if (!autoRotationSettings.enabled) return;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let hasGeneratedNewShifts = false;
+
+    // Check each caregiver's current shift period
+    for (const caregiver of caregivers) {
+      const { current, next } = getShiftPeriods(caregiver.caregiver_id);
+      
+      // Generate next period if current exists but no next period, or if current period is ending within 1 day
+      if (current && !next) {
+        const timeDiffMs = current.endDate.getTime() - today.getTime();
+        const timeDiffDays = Math.ceil(timeDiffMs / (1000 * 60 * 60 * 24));
         
-        // Create the shift record
-        shiftRecords.push(addCaregiverShift(shiftData))
+        // Generate next period if current period ends within 1 day or has already ended
+        if (timeDiffDays <= 1) {
+          const newPeriod = await generateNextShiftPeriod(caregiver.caregiver_id);
+          if (newPeriod) {
+            hasGeneratedNewShifts = true;
+            toast({
+              title: "Auto-Rotation Activated",
+              description: `Next ${newPeriod.shiftType} shift period (${newPeriod.shiftsCount} days) assigned to ${getCaregiverName(newPeriod.caregiverId)}`,
+              duration: 5000,
+            });
+          }
+        }
+      }
+      
+      // Also check if we need to generate initial shifts if no current period exists
+      if (!current && !next) {
+        const initialPeriod = await generateInitialShiftPeriod(caregiver.caregiver_id);
+        if (initialPeriod) {
+          hasGeneratedNewShifts = true;
+          toast({
+            title: "Initial Shift Period Created",
+            description: `${initialPeriod.shiftType} shift period (${initialPeriod.shiftsCount} days) assigned to ${getCaregiverName(initialPeriod.caregiverId)}`,
+            duration: 5000,
+          });
+        }
+      }
+    }
+
+    // Reload data if new shifts were generated
+    if (hasGeneratedNewShifts) {
+      await loadData();
+    }
+  };
+
+  // Check for auto-rotations periodically and on mount
+  useEffect(() => {
+    // Run once on mount
+    checkAndProcessAutoRotations();
+    
+    if (autoRotationSettings.enabled) {
+      // Then check every 30 seconds for more responsive automation
+      const interval = setInterval(checkAndProcessAutoRotations, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [shifts, autoRotationSettings.enabled, caregivers]);
+
+  // Helper functions
+  const formatDate = (date: Date | Timestamp) => {
+    const dateObj = date instanceof Timestamp ? date.toDate() : date;
+    return dateObj.toLocaleDateString('en-US', { 
+      weekday: 'short', 
+      month: 'short', 
+      day: 'numeric',
+      year: 'numeric'
+    });
+  };
+
+  const formatTime = (time: string | Timestamp) => {
+    if (typeof time === 'string') {
+      return new Date(`2000-01-01T${time}`).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    } else if (time instanceof Timestamp) {
+      return time.toDate().toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    }
+    return '';
+  };
+
+  const formatDateRange = (shifts: CaregiverShift[]) => {
+    if (shifts.length === 0) return '';
+    if (shifts.length === 1) {
+      const date = shifts[0].shift_date.toDate();
+      return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+
+    const dates = shifts.map(shift => shift.shift_date.toDate()).sort((a, b) => a.getTime() - b.getTime());
+    const firstDate = dates[0];
+    const lastDate = dates[dates.length - 1];
+
+    // If all shifts are on the same day
+    if (firstDate.toDateString() === lastDate.toDateString()) {
+      return firstDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+
+    // Format as "Sun-Wed" if within same week, or "Dec 1-5" if different weeks
+    const firstWeekday = firstDate.toLocaleDateString('en-US', { weekday: 'short' });
+    const lastWeekday = lastDate.toLocaleDateString('en-US', { weekday: 'short' });
+    
+    // Check if they're in the same month
+    if (firstDate.getMonth() === lastDate.getMonth() && firstDate.getFullYear() === lastDate.getFullYear()) {
+      return `${firstWeekday} ${firstDate.getDate()}-${lastWeekday} ${lastDate.getDate()}`;
+    } else {
+      return `${firstDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} - ${lastDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`;
+    }
+  };
+
+  const getCaregiverName = (caregiverId: string) => {
+    const caregiver = caregivers.find(c => c.caregiver_id === caregiverId);
+    return caregiver ? `${caregiver.first_name} ${caregiver.last_name}` : 'Unknown';
+  };
+
+  // Calendar helper functions
+  const getWeekDates = (date: Date) => {
+    const start = new Date(date);
+    start.setDate(date.getDate() - date.getDay());
+    
+    const dates = [];
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(start);
+      day.setDate(start.getDate() + i);
+      dates.push(day);
+    }
+    return dates;
+  };
+
+  const getRelevantShiftsForCalendar = () => {
+    // Use the same filtering logic as table view
+    return getRelevantShifts();
+  };
+
+  const getShiftsForDate = (date: Date) => {
+    const relevantShifts = getRelevantShiftsForCalendar();
+    return relevantShifts.filter(shift => {
+      const shiftDate = shift.shift_date.toDate();
+      return shiftDate.toDateString() === date.toDateString();
+    });
+  };
+
+  const getMonthYear = (date: Date) => {
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  const navigateWeek = (direction: 'prev' | 'next') => {
+    const newDate = new Date(currentDate);
+    newDate.setDate(newDate.getDate() + (direction === 'next' ? 7 : -7));
+    setCurrentDate(newDate);
+  };
+
+  // Shift management functions
+  const handleEditShift = (shift: CaregiverShift) => {
+    setEditingShift(shift);
+    setEditForm({
+      caregiverId: shift.caregiver_id,
+      date: shift.shift_date.toDate().toISOString().split('T')[0],
+      shiftType: shift.shift_type,
+      startTime: shift.start_time instanceof Timestamp 
+        ? shift.start_time.toDate().toTimeString().split(' ')[0].substring(0, 5)
+        : shift.start_time,
+      endTime: shift.end_time instanceof Timestamp 
+        ? shift.end_time.toDate().toTimeString().split(' ')[0].substring(0, 5)
+        : shift.end_time,
+      notes: shift.notes || ''
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  const handleSaveShift = async () => {
+    if (!editingShift) return;
+
+    try {
+      const shiftDate = new Date(editForm.date);
+      const startTime = new Date(`${editForm.date}T${editForm.startTime}`);
+      const endTime = new Date(`${editForm.date}T${editForm.endTime}`);
+      
+      if (editForm.shiftType === 'Night' && editForm.endTime < editForm.startTime) {
+        endTime.setDate(endTime.getDate() + 1);
       }
 
-      // Wait for all shift records to be created
-      const createdShiftIds = await Promise.all(shiftRecords)
-      console.log(` Created ${createdShiftIds.length} shift records for ${selectedCaregiver.first_name} ${selectedCaregiver.last_name}`)
+      const updatedShift = {
+        ...editingShift,
+        caregiver_id: editForm.caregiverId,
+        shift_date: Timestamp.fromDate(shiftDate),
+        shift_type: editForm.shiftType,
+        start_time: Timestamp.fromDate(startTime),
+        end_time: Timestamp.fromDate(endTime),
+        notes: editForm.notes,
+        updated_at: Timestamp.now()
+      };
 
-      // Update caregiver record with new schedule
-      const updates = {
-        shift_type: tempScheduleData.shift_type,
-        shift_start_date: dateToTimestamp(tempScheduleData.start_date),
-        shift_end_date: dateToTimestamp(tempScheduleData.end_date),
-        max_patients: maxPatients,
-        updated_at: Timestamp.now(),
-        // Save original schedule if this is the first temporary assignment
-        original_shift_type: selectedCaregiver.original_shift_type || selectedCaregiver.shift_type,
-        original_shift_start_date: selectedCaregiver.original_shift_start_date || selectedCaregiver.shift_start_date,
-        original_shift_end_date: selectedCaregiver.original_shift_end_date || selectedCaregiver.shift_end_date,
-        // Add a note about this being a temporary schedule
-        temporary_schedule_reason: tempScheduleData.reason || "Temporary schedule assignment"
+      await updateCaregiverShift(editingShift.shift_id, updatedShift);
+      await loadData();
+      
+      // Check if we need to generate new shifts after update
+      if (autoRotationSettings.enabled) {
+        setTimeout(() => {
+          checkAndProcessAutoRotations();
+        }, 1000); // Wait for data to be updated
       }
+      
+      setIsEditDialogOpen(false);
+      setEditingShift(null);
 
-      await updateCaregiver(tempScheduleData.caregiver_id, updates)
-      console.log('Updated caregiver with new schedule')
+      toast({
+        title: "Success",
+        description: "Shift updated successfully",
+      });
+    } catch (error) {
+      console.error('Error updating shift:', error);
+      toast({
+        title: "Error",
+        description: "Failed to update shift",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteShift = async (shiftId: string) => {
+    try {
+      await deleteCaregiverShift(shiftId);
+      await loadData();
       
-      // Refresh data with a small delay to ensure Firebase consistency
-      console.log('Refreshing schedule data...')
-      await new Promise(resolve => setTimeout(resolve, 500)) // Small delay for Firebase consistency
-      await loadData()
-      console.log('Schedule data refreshed')
-      console.log(` Updated caregiver ${selectedCaregiver.first_name} ${selectedCaregiver.last_name} with new schedule`)
-      
-      // Refresh data with a small delay to ensure Firebase consistency
-      console.log(' Refreshing schedule data...')
-      await new Promise(resolve => setTimeout(resolve, 500)) // Small delay for Firebase consistency
-      await loadData()
-      console.log('Schedule data refreshed')
-      
-      // Reset form and close dialog
-      resetTempScheduleForm()
-      setIsTemporaryScheduleOpen(false)
+      // Check if we need to regenerate shifts after deletion
+      if (autoRotationSettings.enabled) {
+        setTimeout(() => {
+          checkAndProcessAutoRotations();
+        }, 1000); // Wait for data to be updated
+      }
       
       toast({
         title: "Success",
-        description: `Temporary schedule created for ${selectedCaregiver.first_name} ${selectedCaregiver.last_name}`,
-      })
-      
+        description: "Shift deleted successfully",
+      });
     } catch (error) {
-      console.error("Error creating temporary schedule:", error)
+      console.error('Error deleting shift:', error);
       toast({
         title: "Error",
-        description: "Failed to create temporary schedule",
-        variant: "destructive"
-      })
-    } finally {
-      setAddingTemporarySchedule(false)
+        description: "Failed to delete shift",
+        variant: "destructive",
+      });
     }
-  }
+  };
+
+  const handleViewAllShifts = (caregiverId: string, shifts: CaregiverShift[]) => {
+    setSelectedCaregiverShifts({ caregiverId, shifts });
+    setIsViewAllDialogOpen(true);
+  };
 
   if (loading) {
     return (
@@ -1160,11 +867,11 @@ const Schedule = () => {
         <div className="flex items-center justify-center min-h-[400px]">
           <div className="flex flex-col items-center space-y-4">
             <Clock className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-muted-foreground">Loading schedules...</p>
+            <p className="text-muted-foreground">Loading caregiver shifts...</p>
           </div>
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -1172,762 +879,1277 @@ const Schedule = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-5xl font-bold text-foreground">Schedule Management</h1>
-          <p className="text-xl text-muted-foreground">View and manage caregiver schedules and shifts</p>
+          <h1 className="text-3xl font-bold text-foreground">Caregiver Schedule</h1>
+          <p className="text-muted-foreground">Manage caregiver shifts and assignments</p>
         </div>
         <div className="flex gap-2">
           <Button 
             variant="outline" 
-            onClick={refreshData} 
+            size="sm"
+            onClick={async () => {
+              setLoading(true);
+              await loadData();
+              await checkAndProcessAutoRotations();
+              setLoading(false);
+              toast({
+                title: "Refreshed",
+                description: "Schedule data has been refreshed",
+              });
+            }}
             disabled={loading}
-            className="gap-2 h-12 text-base"
           >
-            {loading ? (
-              <RefreshCw className="h-5 w-5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-5 w-5" />
-            )}
+            <Clock className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button 
-            variant="outline" 
-            onClick={refreshAvailability} 
-            disabled={loadingAvailability}
-            className="gap-2"
-            title="Refresh caregiver availability status"
-          >
-            {loadingAvailability ? (
-              <Activity className="h-4 w-4 animate-spin" />
-            ) : (
-              <Activity className="h-4 w-4" />
-            )}
-            Check Availability
+          <Button variant="outline" onClick={() => setIsAutoRotationDialogOpen(true)}>
+            <Clock className="h-4 w-4 mr-2" />
+            Auto-Rotation Settings
           </Button>
-          <Select value={selectedShift} onValueChange={(value: 'all' | 'Day' | 'Night') => setSelectedShift(value)}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="Filter by shift" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Shifts</SelectItem>
-              <SelectItem value="Day">Day Shift</SelectItem>
-              <SelectItem value="Night">Night Shift</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button 
-            variant={showTemporaryOnly ? "default" : "outline"}
-            onClick={() => setShowTemporaryOnly(!showTemporaryOnly)}
-            className="gap-2"
-          >
-            ðŸ”„ {showTemporaryOnly ? "Show All" : "Temporary Only"}
-          </Button>
-          <Button 
-            variant="destructive" 
-            onClick={clearAllTemporarySchedules} 
-            disabled={clearingTemporary || caregivers.filter(c => c.temporary_schedule_reason).length === 0}
-            className="gap-2"
-          >
-            {clearingTemporary ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <RotateCcw className="h-4 w-4" />
-            )}
-            Clear All Temporary
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={autoRotateExpiredShifts} 
-            disabled={rotatingShifts}
-            className="gap-2"
-          >
-            {rotatingShifts ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <RotateCcw className="h-4 w-4" />
-            )}
-            Auto Rotate Shifts
-          </Button>
-          <Dialog open={isTemporaryScheduleOpen} onOpenChange={setIsTemporaryScheduleOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" />
-                Temporary Schedule
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px]">
-              <DialogHeader>
-                <DialogTitle>Add Temporary Schedule</DialogTitle>
-                <DialogDescription>
-                  Create a temporary schedule assignment for a caregiver.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="caregiver">Caregiver *</Label>
-                  <Select 
-                    value={tempScheduleData.caregiver_id} 
-                    onValueChange={(value) => handleTempScheduleInputChange("caregiver_id", value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select caregiver" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {caregivers.map((caregiver) => (
-                        <SelectItem key={caregiver.caregiver_id} value={caregiver.caregiver_id}>
-                          {caregiver.first_name} {caregiver.last_name} - Current: {caregiver.shift_type}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="startDate">Start Date *</Label>
-                    <Input 
-                      id="startDate" 
-                      type="date"
-                      value={tempScheduleData.start_date}
-                      onChange={(e) => handleTempScheduleInputChange("start_date", e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="endDate">End Date *</Label>
-                    <Input 
-                      id="endDate" 
-                      type="date"
-                      value={tempScheduleData.end_date}
-                      onChange={(e) => handleTempScheduleInputChange("end_date", e.target.value)}
-                      required
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="shiftType">Shift Type *</Label>
-                  <Select 
-                    value={tempScheduleData.shift_type} 
-                    onValueChange={(value) => handleTempScheduleInputChange("shift_type", value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select shift type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Day">Day Shift</SelectItem>
-                      <SelectItem value="Night">Night Shift</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="reason">Reason (Optional)</Label>
-                  <Input 
-                    id="reason" 
-                    placeholder="e.g., Cover for sick caregiver, Holiday coverage"
-                    value={tempScheduleData.reason}
-                    onChange={(e) => handleTempScheduleInputChange("reason", e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end gap-3">
-                <Button variant="outline" onClick={() => setIsTemporaryScheduleOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleAddTemporarySchedule} disabled={addingTemporarySchedule}>
-                  {addingTemporarySchedule ? (
-                    <>
-                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    "Create Schedule"
-                  )}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-          <Button variant="outline" onClick={goToToday}>
-            Today
+          <Button>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Shift
           </Button>
         </div>
       </div>
 
-      {/* Expired Shifts Alert */}
-      {caregivers.filter(hasShiftEnded).length > 0 && (
-        <Card className="border-orange-200 bg-orange-50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-orange-800">
-              <Clock className="h-5 w-5" />
-              Expired Shifts Detected
-            </CardTitle>
-            <CardDescription className="text-orange-700">
-              The following caregivers have expired shifts and need to be rotated to the opposite shift.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {caregivers.filter(hasShiftEnded).map((caregiver) => (
-                <div key={caregiver.caregiver_id} className="flex items-center justify-between p-3 bg-white rounded-md border border-orange-200">
-                  <div className="flex items-center gap-3">
-                    <div className="font-medium">
-                      {caregiver.first_name} {caregiver.last_name}
-                    </div>
-                    <Badge className={getShiftColor(caregiver.shift_type)} variant="outline">
-                      {caregiver.shift_type} Shift
-                    </Badge>
-                    <span className="text-sm text-muted-foreground">
-                      Ended: {timestampToDate(caregiver.shift_end_date)}
-                    </span>
+      {/* View Toggle and Content */}
+      <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as 'table' | 'calendar')} className="w-full">
+        <div className="flex items-center justify-between mb-4">
+          <TabsList className="grid w-[400px] grid-cols-2">
+            <TabsTrigger value="table" className="flex items-center gap-2">
+              <List className="h-4 w-4" />
+              Table View
+            </TabsTrigger>
+            <TabsTrigger value="calendar" className="flex items-center gap-2">
+              <CalendarDays className="h-4 w-4" />
+              Calendar View
+            </TabsTrigger>
+          </TabsList>
+        </div>
+
+        <TabsContent value="table" className="space-y-6">
+          {/* Stats Summary */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                  <div className="text-sm font-medium">Active Caregivers</div>
+                </div>
+                <div className="text-2xl font-bold text-blue-600 mt-1">
+                  {getGroupedShifts().length}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                  <div className="text-sm font-medium">Total Shifts</div>
+                </div>
+                <div className="text-2xl font-bold text-green-600 mt-1">
+                  {getRelevantShifts().length}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
+                  <div className="text-sm font-medium">Periods Ending</div>
+                </div>
+                <div className="text-2xl font-bold text-orange-600 mt-1">
+                  {caregivers.filter(c => {
+                    const { current } = getShiftPeriods(c.caregiver_id);
+                    return current && isShiftPeriodAboutToEnd(c.caregiver_id);
+                  }).length}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                  <div className="text-sm font-medium">Auto-Rotation</div>
+                </div>
+                <div className="text-sm font-bold mt-1">
+                  <Badge variant={autoRotationSettings.enabled ? "default" : "secondary"}>
+                    {autoRotationSettings.enabled ? 'ENABLED' : 'DISABLED'}
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Enhanced Shifts Table */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <List className="h-5 w-5" />
+                    Caregiver Schedule Overview
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Current and next periods with recent history • Auto-rotation: {autoRotationSettings.enabled ? 'Active' : 'Inactive'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-xs">
+                    Showing {getRelevantShifts().length} relevant shifts
+                  </Badge>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {getRelevantShifts().length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="mx-auto w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                    <Calendar className="h-12 w-12 text-gray-400" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">
-                      â†’ Rotate to {getOppositeShift(caregiver.shift_type)} Shift
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => manualRotateCaregiver(caregiver)}
-                      disabled={rotatingShifts}
-                      className="gap-2"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      Rotate Now
+                  <h3 className="text-lg font-semibold mb-2">No Active Shifts</h3>
+                  <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+                    No current or next period shifts found. Enable auto-rotation to generate periods automatically, or add shifts manually.
+                  </p>
+                  <div className="flex gap-2 justify-center">
+                    <Button>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add New Shift
+                    </Button>
+                    <Button variant="outline" onClick={() => setIsAutoRotationDialogOpen(true)}>
+                      <Clock className="h-4 w-4 mr-2" />
+                      Configure Auto-Rotation
                     </Button>
                   </div>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Caregivers</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{caregivers.length}</div>
-            <p className="text-xs text-muted-foreground">Active caregivers</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Day Shift</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{caregivers.filter(c => c.shift_type === 'Day').length}</div>
-            <p className="text-xs text-muted-foreground">7AM - 7PM</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Night Shift</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{caregivers.filter(c => c.shift_type === 'Night').length}</div>
-            <p className="text-xs text-muted-foreground">7PM - 7AM</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Temporary Schedules</CardTitle>
-            <RefreshCw className="h-4 w-4 text-orange-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-orange-600">
-              {caregivers.filter(c => c.temporary_schedule_reason).length}
-            </div>
-            <p className="text-xs text-muted-foreground">Active temporary assignments</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Available Capacity</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {caregivers.reduce((total, caregiver) => total + getAvailablePatientSlots(caregiver), 0)}
-            </div>
-            <p className="text-xs text-muted-foreground">Patient slots available</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Today's Schedule Summary */}
-      <Card>
-        <CardHeader 
-          className="cursor-pointer hover:bg-muted/50 transition-colors"
-          onClick={() => setShowTodaySchedules(!showTodaySchedules)}
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Activity className="h-5 w-5" />
-                Today's Active Schedules
-              </CardTitle>
-              <CardDescription>
-                Caregivers currently on duty - {new Date().toLocaleDateString('en-US', { 
-                  weekday: 'long', 
-                  year: 'numeric', 
-                  month: 'long', 
-                  day: 'numeric' 
-                })}
-              </CardDescription>
-            </div>
-            <Button variant="ghost" size="sm">
-              {showTodaySchedules ? (
-                <ChevronUp className="h-4 w-4" />
               ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
-        </CardHeader>
-        {showTodaySchedules && (
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {(() => {
-              const today = new Date()
-              const todayStr = today.toISOString().split('T')[0]
-              const activeToday = caregivers.filter(caregiver => hasShiftOnDate(caregiver, today))
-              
-              console.log(`ðŸ“… Today's Active Schedules (${todayStr}):`)
-              console.log(`   Total caregivers: ${caregivers.length}`)
-              console.log(`   Active today: ${activeToday.length}`)
-              console.log(`   Total shifts loaded: ${caregiverShifts.length}`)
-              console.log(`   Today's shifts: ${caregiverShifts.filter(s => timestampToDate(s.shift_date) === todayStr).length}`)
-              
-              return activeToday.length === 0 ? (
-                <div className="col-span-2 text-center py-8">
-                  <Calendar className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-lg font-medium text-muted-foreground">No active schedules today</p>
-                  <p className="text-sm text-muted-foreground mt-2">No caregivers are scheduled to work today</p>
-                </div>
-              ) : (
-                activeToday
-                  .sort((a, b) => {
-                    // First sort by shift type (Day first, then Night)
-                    if (a.shift_type !== b.shift_type) {
-                      return a.shift_type === 'Day' ? -1 : 1
-                    }
-                    // Then sort alphabetically by name
-                    const nameA = `${a.first_name} ${a.last_name}`.toLowerCase()
-                    const nameB = `${b.first_name} ${b.last_name}`.toLowerCase()
-                    return nameA.localeCompare(nameB)
-                  })
-                .map((caregiver) => {
-                  const assignedPatients = getAssignedPatients(caregiver.caregiver_id, caregiver.shift_type)
-                  return (
-                    <Card 
-                      key={caregiver.caregiver_id} 
-                      className={`cursor-pointer transition-all hover:shadow-md ${
-                        selectedCaregiversForCalendar.includes(caregiver.caregiver_id)
-                          ? 'ring-2 ring-primary border-primary bg-primary/5' 
-                          : 'hover:border-primary/50'
-                      }`}
-                      onClick={() => {
-                        setSelectedCaregiversForCalendar(prev => {
-                          if (prev.includes(caregiver.caregiver_id)) {
-                            // Remove caregiver if already selected
-                            return prev.filter(id => id !== caregiver.caregiver_id)
-                          } else {
-                            // Add caregiver to selection
-                            return [...prev, caregiver.caregiver_id]
-                          }
-                        })
-                      }}
-                    >
-                      <CardContent className="p-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="font-medium">
-                            {caregiver.first_name} {caregiver.last_name}
-                          </div>
-                          <div className="flex gap-2">
-                            <Badge className={getShiftColor(caregiver.shift_type)} variant="outline">
-                              {caregiver.shift_type} - {getShiftTimes(caregiver.shift_type)}
-                            </Badge>
-                            {loadingAvailability ? (
-                              <Badge className="bg-gray-100 text-gray-800 border-gray-300">
-                                Checking...
-                              </Badge>
-                            ) : caregiverAvailability[caregiver.caregiver_id] ? (
-                              getAvailabilityBadge(caregiverAvailability[caregiver.caregiver_id])
-                            ) : (
-                              <Badge className="bg-gray-100 text-gray-800 border-gray-300">
-                                Unknown
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                        <div className="space-y-2 text-sm text-muted-foreground">
-                          <div className="flex items-center gap-2">
-                            <Phone className="h-3 w-3" />
-                            {caregiver.contact_number}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Users className="h-3 w-3" />
-                            {assignedPatients.length} of {caregiver.max_patients || getMaxPatientsForShift(caregiver.shift_type)} patients assigned
-                          </div>
-                          {assignedPatients.length > 0 && (
-                            <div className="mt-2">
-                              <div className="text-xs font-medium mb-1">Assigned Patients:</div>
-                              <div className="flex flex-wrap gap-1">
-                                {assignedPatients.map((patient, idx) => (
-                                  <Badge key={idx} variant="secondary" className="text-xs">
-                                    {patient.first_name} {patient.last_name}
-                                  </Badge>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )
-                })
-              )
-            })()}
-          </div>
-        </CardContent>
-        )}
-      </Card>
-
-      {/* Weekly Schedule Calendar */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Button variant="outline" size="sm" onClick={goToPreviousWeek}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <div className="text-lg font-semibold">
-                {weekDates[0].toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </div>
-              <Button variant="outline" size="sm" onClick={goToNextWeek}>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-            <div className="text-sm text-muted-foreground">
-              Week of {weekDates[0].toLocaleDateString()} - {weekDates[6].toLocaleDateString()}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {/* Calendar Grid */}
-          <div className="space-y-4">
-            {/* NEW: Caregiver List */}
-            <div className="space-y-2">
-              <h3 className="text-lg font-medium text-foreground">Caregivers - Select to View Calendar</h3>
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  <Select
-                    value=""
-                    onValueChange={(caregiverId) => {
-                      if (caregiverId && !selectedCaregiversForCalendar.includes(caregiverId)) {
-                        setSelectedCaregiversForCalendar(prev => [...prev, caregiverId])
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select a caregiver to view their calendar..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {filteredCaregivers.length === 0 ? (
-                        <SelectItem value="no-caregivers" disabled>
-                          {selectedShift === 'all' 
-                            ? "No caregivers are currently registered" 
-                            : `No caregivers found for ${selectedShift} shift`}
-                        </SelectItem>
-                      ) : (
-                        filteredCaregivers
-                          .sort((a, b) => {
-                            if (a.shift_type !== b.shift_type) {
-                              return a.shift_type === 'Day' ? -1 : 1
-                            }
-                            const nameA = `${a.first_name} ${a.last_name}`.toLowerCase()
-                            const nameB = `${b.first_name} ${b.last_name}`.toLowerCase()
-                            return nameA.localeCompare(nameB)
-                          })
-                          .map((caregiver) => (
-                            <SelectItem 
-                              key={caregiver.caregiver_id} 
-                              value={caregiver.caregiver_id}
-                              disabled={selectedCaregiversForCalendar.includes(caregiver.caregiver_id)}
-                            >
-                              <div className="flex items-center justify-between w-full">
-                                <span>
-                                  {caregiver.first_name} {caregiver.last_name}
-                                </span>
-                                <Badge 
-                                  variant={caregiver.shift_type === 'Day' ? 'default' : 'secondary'}
-                                  className="text-xs ml-2"
-                                >
-                                  {caregiver.shift_type}
-                                </Badge>
-                              </div>
-                            </SelectItem>
-                          ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                {selectedCaregiversForCalendar.length > 0 && (
-                  <Button 
-                    variant="outline" 
-                    onClick={() => setSelectedCaregiversForCalendar([])}
-                    className="shrink-0"
-                  >
-                    Clear All ({selectedCaregiversForCalendar.length})
-                  </Button>
-                )}
-              </div>
-              
-              {/* Show selected caregivers as badges */}
-              {selectedCaregiversForCalendar.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium text-muted-foreground">
-                    Selected Caregivers ({selectedCaregiversForCalendar.length}):
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedCaregiversForCalendar.map(caregiverId => {
-                      const caregiver = filteredCaregivers.find(c => c.caregiver_id === caregiverId)
-                      if (!caregiver) return null
-                      
-                      return (
-                        <Badge 
-                          key={caregiverId}
-                          variant="secondary" 
-                          className="flex items-center gap-2 px-3 py-1"
-                        >
-                          <span>{caregiver.first_name} {caregiver.last_name}</span>
-                          <Badge 
-                            variant={caregiver.shift_type === 'Day' ? 'default' : 'outline'}
-                            className="text-xs"
-                          >
-                            {caregiver.shift_type}
-                          </Badge>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-4 w-4 p-0 hover:bg-destructive hover:text-destructive-foreground"
-                            onClick={() => {
-                              setSelectedCaregiversForCalendar(prev => 
-                                prev.filter(id => id !== caregiverId)
-                              )
-                            }}
-                          >
-                            ×
-                          </Button>
-                        </Badge>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-                {filteredCaregivers.length === 0 ? (
-                  <div className="col-span-full text-center py-8">
-                    <Calendar className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <p className="text-lg font-medium text-muted-foreground">
-                      No caregivers found
-                    </p>
-                    <p className="text-sm text-muted-foreground mt-2">
-                      {selectedShift === 'all' 
-                        ? "No caregivers are currently registered" 
-                        : `No caregivers found for ${selectedShift} shift`}
-                    </p>
-                  </div>
-                ) : (
-                  filteredCaregivers
-                    .sort((a, b) => {
-                      if (a.shift_type !== b.shift_type) {
-                        return a.shift_type === 'Day' ? -1 : 1
-                      }
-                      const nameA = `${a.first_name} ${a.last_name}`.toLowerCase()
-                      const nameB = `${b.first_name} ${b.last_name}`.toLowerCase()
-                      return nameA.localeCompare(nameB)
-                    })
-                    .map((caregiver) => (
-                      <Card 
-                        key={caregiver.caregiver_id} 
-                        className={`cursor-pointer transition-all hover:shadow-md ${
-                          selectedCaregiversForCalendar.includes(caregiver.caregiver_id)
-                            ? 'ring-2 ring-primary border-primary bg-primary/5' 
-                            : 'hover:border-primary/50'
-                        }`}
-                        onClick={() => {
-                          setSelectedCaregiversForCalendar(prev => {
-                            if (prev.includes(caregiver.caregiver_id)) {
-                              // Remove caregiver if already selected
-                              return prev.filter(id => id !== caregiver.caregiver_id)
-                            } else {
-                              // Add caregiver to selection
-                              return [...prev, caregiver.caregiver_id]
-                            }
-                          })
-                        }}
-                      >
-                        <CardContent className="p-4">
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <div className="font-medium text-base">
-                                {caregiver.first_name} {caregiver.last_name}
-                              </div>
-                              <Badge 
-                                variant={caregiver.shift_type === 'Day' ? 'default' : 'secondary'}
-                                className="text-sm"
-                              >
-                                {caregiver.shift_type}
-                              </Badge>
-                            </div>
-                            <div className="text-sm text-muted-foreground">
-                              {selectedCaregiversForCalendar.includes(caregiver.caregiver_id) 
-                                ? 'ðŸ“… Calendar shown below' 
-                                : 'Click to show calendar'
-                              }
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))
-                )}
-              </div>
-            </div>
-
-            {/* NEW: Multiple Selected Caregivers Calendars */}
-            {selectedCaregiversForCalendar.length > 0 && (
-              <div className="space-y-6 border-t pt-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-medium">
-                    📅 Calendars ({selectedCaregiversForCalendar.length} selected)
-                  </h3>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => setSelectedCaregiversForCalendar([])}
-                  >
-                    Hide All Calendars
-                  </Button>
-                </div>
-                
-                {selectedCaregiversForCalendar.map(caregiverId => {
-                  const selectedCaregiver = filteredCaregivers.find(c => c.caregiver_id === caregiverId)
-                  if (!selectedCaregiver) return null
-                  
-                  return (
-                    <div key={caregiverId} className="space-y-4 border-t pt-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-medium">
-                       Calendar for {selectedCaregiver.first_name} {selectedCaregiver.last_name}
-                    </h3>
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => setSelectedCaregiversForCalendar([])}
-                    >
-                      Hide Calendar
-                    </Button>
-                  </div>
-                  
-                  {/* Week Header */}
-                  <div className="grid grid-cols-7 gap-4">
-                    {weekDates.map((date, index) => (
-                      <div key={index} className="text-center">
-                        <div className="font-medium text-sm">{formatDate(date)}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {date.toDateString() === new Date().toDateString() && (
-                            <Badge variant="outline" className="text-xs">Today</Badge>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Calendar Row for Selected Caregiver */}
-                  <div className="grid grid-cols-7 gap-4 py-3 border rounded-lg bg-muted/20">
-                    {weekDates.map((date, index) => {
-                      const assignedPatients = getAssignedPatients(selectedCaregiver.caregiver_id, selectedCaregiver.shift_type)
-                      const isShiftDay = hasShiftOnDate(selectedCaregiver, date)
-                      const isShiftExpired = hasShiftEnded(selectedCaregiver)
-                      const isTodayLastDay = isLastDayOfShift(selectedCaregiver) && date.toDateString() === new Date().toDateString()
-                      
-                      return (
-                        <div key={index} className="min-h-[120px]">
-                          {isShiftDay ? (
-                            <div className={`
-                              w-full h-full rounded-md p-2 text-xs 
-                              ${selectedCaregiver.shift_type === 'Day' 
-                                ? 'bg-yellow-100 border border-yellow-300 text-yellow-900' 
-                                : 'bg-purple-100 border border-purple-300 text-purple-900'
-                              }
-                            `}>
-                              <div className="font-semibold mb-1">
-                                {selectedCaregiver.shift_type} Shift
-                              </div>
-                              <div className="text-xs opacity-75 mb-2">
-                                {getShiftTimes(selectedCaregiver.shift_type)}
-                              </div>
-                              
-                              {/* Patient assignments */}
-                              {assignedPatients.length > 0 && !isShiftExpired && (
-                                <div className="mt-1 space-y-1">
-                                  <div className="text-xs font-medium">Patients:</div>
-                                  {assignedPatients.slice(0, 2).map((patient, idx) => (
-                                    <div key={idx} className="text-xs bg-white/20 rounded px-1 py-0.5">
-                                      {patient.first_name} {patient.last_name.charAt(0)}.
+                <div className="space-y-4">
+                  {/* Table Header */}
+                  <div className="hidden lg:block">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="border-b-2">
+                          <TableHead className="font-semibold">Caregiver</TableHead>
+                          <TableHead className="font-semibold">Current Period</TableHead>
+                          <TableHead className="font-semibold">Next Period</TableHead>
+                          <TableHead className="font-semibold">Recent Shifts</TableHead>
+                          <TableHead className="font-semibold text-center">Total</TableHead>
+                          <TableHead className="font-semibold text-center">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {getGroupedShifts().map(({ caregiverId, shifts: caregiverShifts }) => {
+                          const totalShifts = caregiverShifts.length;
+                          const { current, next } = getShiftPeriods(caregiverId);
+                          const isCurrentPeriodEnding = current && isShiftPeriodAboutToEnd(caregiverId);
+                          const caregiver = caregivers.find(c => c.caregiver_id === caregiverId);
+                          
+                          return (
+                            <TableRow key={caregiverId} className="hover:bg-gray-50/50">
+                              <TableCell className="font-medium">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-sm">
+                                    {caregiver?.first_name?.charAt(0)}{caregiver?.last_name?.charAt(0)}
+                                  </div>
+                                  <div>
+                                    <div className="font-semibold">{getCaregiverName(caregiverId)}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {caregiver?.shift_type} Shift • Active
                                     </div>
-                                  ))}
-                                  {assignedPatients.length > 2 && (
-                                    <div className="text-xs opacity-75">
-                                      +{assignedPatients.length - 2} more
-                                    </div>
+                                  </div>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                {current ? (
+                                  (() => {
+                                    const today = new Date();
+                                    today.setHours(0, 0, 0, 0);
+                                    const isPastPeriod = current.endDate < today;
+                                    
+                                    return (
+                                      <div className={`flex flex-col p-3 rounded-lg border-l-4 ${
+                                        isPastPeriod 
+                                          ? 'bg-gray-50 border-gray-300 opacity-75' 
+                                          : isCurrentPeriodEnding 
+                                            ? 'bg-orange-50 border-orange-400 shadow-sm' 
+                                            : 'bg-blue-50 border-blue-400 shadow-sm'
+                                      }`}>
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <Badge 
+                                            variant={isPastPeriod ? 'outline' : current.type === 'Day' ? 'default' : 'secondary'} 
+                                            className={`text-xs ${isPastPeriod ? 'border-gray-300 text-gray-500' : ''}`}
+                                          >
+                                            {current.type} Shift
+                                          </Badge>
+                                          {isPastPeriod && (
+                                            <Badge variant="outline" className="text-xs border-gray-300 text-gray-500">
+                                              Completed
+                                            </Badge>
+                                          )}
+                                          {!isPastPeriod && isCurrentPeriodEnding && (
+                                            <Badge variant="destructive" className="text-xs animate-pulse">
+                                              Ending Soon
+                                            </Badge>
+                                          )}
+                                        </div>
+                                        <div className={`font-medium text-sm ${isPastPeriod ? 'text-gray-500' : ''}`}>
+                                          {current.startDate.toLocaleDateString('en-US', { 
+                                            month: 'short', 
+                                            day: 'numeric' 
+                                          })} - {current.endDate.toLocaleDateString('en-US', { 
+                                            month: 'short', 
+                                            day: 'numeric' 
+                                          })}
+                                        </div>
+                                        <div className={`text-xs ${isPastPeriod ? 'text-gray-400' : 'text-muted-foreground'}`}>
+                                          {current.shifts.length} day{current.shifts.length !== 1 ? 's' : ''} • {
+                                            Math.ceil((current.endDate.getTime() - current.startDate.getTime()) / (1000 * 60 * 60 * 24))
+                                          } total days
+                                        </div>
+                                      </div>
+                                    );
+                                  })()
+                                ) : (
+                                  <div className="text-center p-3 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                                    <span className="text-xs text-muted-foreground">No current period</span>
+                                  </div>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {next ? (
+                                  (() => {
+                                    const today = new Date();
+                                    today.setHours(0, 0, 0, 0);
+                                    const isPastPeriod = next.endDate < today;
+                                    
+                                    return (
+                                      <div className={`flex flex-col p-3 rounded-lg border-l-4 ${
+                                        isPastPeriod 
+                                          ? 'bg-gray-50 border-gray-300 opacity-75' 
+                                          : 'bg-green-50 border-green-400 shadow-sm'
+                                      }`}>
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <Badge 
+                                            variant={isPastPeriod ? 'outline' : next.type === 'Day' ? 'default' : 'secondary'} 
+                                            className={`text-xs ${isPastPeriod ? 'border-gray-300 text-gray-500' : ''}`}
+                                          >
+                                            {next.type} Shift
+                                          </Badge>
+                                          <Badge 
+                                            variant="outline" 
+                                            className={`text-xs ${
+                                              isPastPeriod 
+                                                ? 'border-gray-300 text-gray-500' 
+                                                : 'border-green-300 text-green-700'
+                                            }`}
+                                          >
+                                            {isPastPeriod ? 'Completed' : 'Scheduled'}
+                                          </Badge>
+                                        </div>
+                                        <div className={`font-medium text-sm ${isPastPeriod ? 'text-gray-500' : ''}`}>
+                                          {next.startDate.toLocaleDateString('en-US', { 
+                                            month: 'short', 
+                                            day: 'numeric' 
+                                          })} - {next.endDate.toLocaleDateString('en-US', { 
+                                            month: 'short', 
+                                            day: 'numeric' 
+                                          })}
+                                        </div>
+                                        <div className={`text-xs ${isPastPeriod ? 'text-gray-400' : 'text-muted-foreground'}`}>
+                                          {next.shifts.length} day{next.shifts.length !== 1 ? 's' : ''} • Starts in {
+                                            Math.ceil((next.startDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+                                          } day{Math.ceil((next.startDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) !== 1 ? 's' : ''}
+                                        </div>
+                                      </div>
+                                    );
+                                  })()
+                                ) : (
+                                  <div className="text-center p-3 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                                    {autoRotationSettings.enabled ? (
+                                      <div className="space-y-1">
+                                        <Badge variant="outline" className="text-xs">
+                                          Auto-Generate
+                                        </Badge>
+                                        <div className="text-xs text-muted-foreground">
+                                          Will be created automatically
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground">No next period</span>
+                                    )}
+                                  </div>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <div className="space-y-2 max-w-sm">
+                                  {caregiverShifts.slice(0, 3).map((shift, index) => {
+                                    const isAboutToEnd = isShiftAboutToEnd(shift);
+                                    const shiftDate = shift.shift_date.toDate();
+                                    const today = new Date();
+                                    today.setHours(0, 0, 0, 0);
+                                    const isPastShift = shiftDate < today;
+                                    
+                                    return (
+                                      <div key={shift.shift_id} className={`flex items-center justify-between p-2 rounded-md border text-sm ${
+                                        isPastShift 
+                                          ? 'bg-gray-50 border-gray-200 opacity-75' 
+                                          : isAboutToEnd 
+                                            ? 'bg-orange-50 border-orange-200' 
+                                            : 'bg-white border-gray-200 hover:border-gray-300'
+                                      }`}>
+                                        <div className="flex items-center gap-2">
+                                          <Badge 
+                                            variant={isPastShift ? 'outline' : shift.shift_type === 'Day' ? 'default' : 'secondary'} 
+                                            className={`text-xs ${isPastShift ? 'border-gray-300 text-gray-500' : ''}`}
+                                          >
+                                            {shift.shift_type}
+                                          </Badge>
+                                          <span className={`text-xs ${isPastShift ? 'text-gray-500' : 'text-muted-foreground'}`}>
+                                            {shift.shift_date.toDate().toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' })}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <span className={`text-xs ${isPastShift ? 'text-gray-400' : 'text-muted-foreground'}`}>
+                                            {formatTime(shift.start_time)}-{formatTime(shift.end_time)}
+                                          </span>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-6 w-6 p-0 hover:bg-gray-200"
+                                            onClick={() => handleEditShift(shift)}
+                                          >
+                                            <Edit className="h-3 w-3" />
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                  {totalShifts > 3 && (
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm" 
+                                      className="w-full text-xs py-1 h-8"
+                                      onClick={() => handleViewAllShifts(caregiverId, caregiverShifts)}
+                                    >
+                                      +{totalShifts - 3} more shifts
+                                    </Button>
                                   )}
                                 </div>
-                              )}
-                              
-                              {/* Status badges */}
-                              <div className="text-xs space-y-1 mt-2">
-                                {isShiftExpired ? (
-                                  <Badge className="bg-blue-100 text-blue-800 border-blue-600 text-xs">
-                                    Auto-Rotating
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <div className="flex flex-col items-center gap-1">
+                                  <Badge variant="outline" className="text-sm font-semibold">
+                                    {totalShifts}
                                   </Badge>
-                                ) : isTodayLastDay ? (
-                                  <Badge className="bg-orange-100 text-orange-800 border-orange-600 text-xs">
-                                    Last Day
-                                  </Badge>
-                                ) : canCaregiverTakeMorePatients(selectedCaregiver) ? (
-                                  <Badge variant="outline" className="text-green-600 border-green-600 text-xs">
-                                    Available
-                                  </Badge>
+                                  <span className="text-xs text-muted-foreground">
+                                    shift{totalShifts !== 1 ? 's' : ''}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2 justify-center">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleViewAllShifts(caregiverId, caregiverShifts)}
+                                    className="text-xs"
+                                  >
+                                    View All
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 w-8 p-0"
+                                    title="Add shift for this caregiver"
+                                  >
+                                    <Plus className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Mobile View */}
+                  <div className="lg:hidden space-y-4">
+                    {getGroupedShifts().map(({ caregiverId, shifts: caregiverShifts }) => {
+                      const totalShifts = caregiverShifts.length;
+                      const { current, next } = getShiftPeriods(caregiverId);
+                      const isCurrentPeriodEnding = current && isShiftPeriodAboutToEnd(caregiverId);
+                      const caregiver = caregivers.find(c => c.caregiver_id === caregiverId);
+                      
+                      return (
+                        <Card key={caregiverId} className="overflow-hidden">
+                          <CardContent className="p-4">
+                            {/* Caregiver Header */}
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold">
+                                  {caregiver?.first_name?.charAt(0)}{caregiver?.last_name?.charAt(0)}
+                                </div>
+                                <div>
+                                  <div className="font-semibold text-lg">{getCaregiverName(caregiverId)}</div>
+                                  <div className="text-sm text-muted-foreground">
+                                    {caregiver?.shift_type} Shift • {totalShifts} total shifts
+                                  </div>
+                                </div>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleViewAllShifts(caregiverId, caregiverShifts)}
+                              >
+                                View All
+                              </Button>
+                            </div>
+
+                            {/* Periods */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                              <div>
+                                <h4 className="text-sm font-medium mb-2">Current Period</h4>
+                                {current ? (
+                                  <div className={`p-3 rounded-lg border-l-4 ${
+                                    isCurrentPeriodEnding 
+                                      ? 'bg-orange-50 border-orange-400' 
+                                      : 'bg-blue-50 border-blue-400'
+                                  }`}>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <Badge variant={current.type === 'Day' ? 'default' : 'secondary'} className="text-xs">
+                                        {current.type}
+                                      </Badge>
+                                      {isCurrentPeriodEnding && (
+                                        <Badge variant="destructive" className="text-xs">
+                                          Ending Soon
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="text-sm font-medium">
+                                      {current.startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - 
+                                      {current.endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                    </div>
+                                  </div>
                                 ) : (
-                                  <Badge variant="outline" className="text-red-600 border-red-600 text-xs">
-                                    Full
-                                  </Badge>
+                                  <div className="p-3 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-center">
+                                    <span className="text-sm text-muted-foreground">No current period</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div>
+                                <h4 className="text-sm font-medium mb-2">Next Period</h4>
+                                {next ? (
+                                  <div className="p-3 rounded-lg border-l-4 bg-green-50 border-green-400">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <Badge variant={next.type === 'Day' ? 'default' : 'secondary'} className="text-xs">
+                                        {next.type}
+                                      </Badge>
+                                      <Badge variant="outline" className="text-xs border-green-300 text-green-700">
+                                        Scheduled
+                                      </Badge>
+                                    </div>
+                                    <div className="text-sm font-medium">
+                                      {next.startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - 
+                                      {next.endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="p-3 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-center">
+                                    {autoRotationSettings.enabled ? (
+                                      <Badge variant="outline" className="text-xs">
+                                        Auto-Generate
+                                      </Badge>
+                                    ) : (
+                                      <span className="text-sm text-muted-foreground">No next period</span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             </div>
-                          ) : (
-                            <div className="w-full h-full rounded-md border border-dashed border-gray-300 
-                              flex items-center justify-center text-xs text-muted-foreground">
-                              Off
+
+                            {/* Recent Shifts */}
+                            <div>
+                              <h4 className="text-sm font-medium mb-2">Recent Shifts</h4>
+                              <div className="space-y-2">
+                                {caregiverShifts.slice(0, 2).map((shift) => (
+                                  <div key={shift.shift_id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                                    <div className="flex items-center gap-2">
+                                      <Badge variant={shift.shift_type === 'Day' ? 'default' : 'secondary'} className="text-xs">
+                                        {shift.shift_type}
+                                      </Badge>
+                                      <span className="text-sm">{formatDate(shift.shift_date)}</span>
+                                    </div>
+                                    <span className="text-sm text-muted-foreground">
+                                      {formatTime(shift.start_time)}-{formatTime(shift.end_time)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      )
+                          </CardContent>
+                        </Card>
+                      );
                     })}
                   </div>
                 </div>
-              )
-            })}
-          </div>
-        )}
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-export default Schedule
+        <TabsContent value="calendar" className="space-y-6">
+          {/* Calendar View */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <CalendarDays className="h-5 w-5" />
+                  Schedule Calendar
+                </CardTitle>
+                <div className="flex items-center gap-3">
+                  {/* Month/Week Toggle */}
+                  <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-lg">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-8 px-3 text-xs"
+                      onClick={() => {/* Week view logic */}}
+                    >
+                      Week
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-8 px-3 text-xs bg-white shadow-sm"
+                      onClick={() => {/* Month view logic */}}
+                    >
+                      Month
+                    </Button>
+                  </div>
+                  
+                  {/* Navigation Controls */}
+                  <div className="flex items-center gap-1">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => navigateWeek('prev')}
+                      className="h-8 w-8 p-0"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    
+                    {/* Date Display & Picker */}
+                    <div className="flex items-center gap-2 mx-2">
+                      <span className="text-lg font-semibold min-w-[200px] text-center">
+                        {getMonthYear(currentDate)}
+                      </span>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => setCurrentDate(new Date())}
+                        className="text-xs h-8"
+                      >
+                        Today
+                      </Button>
+                    </div>
+                    
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => navigateWeek('next')}
+                      className="h-8 w-8 p-0"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {/* Quick Jump */}
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="date"
+                      value={currentDate.toISOString().split('T')[0]}
+                      onChange={(e) => setCurrentDate(new Date(e.target.value))}
+                      className="w-40 h-8 text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+              
+              {/* Next Shift Legend */}
+              <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-4">
+                    <span className="text-sm font-medium text-muted-foreground">Period Indicators:</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                      <span className="text-xs">Current Period</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                      <span className="text-xs">Next Period</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-orange-500 animate-pulse"></div>
+                      <span className="text-xs">Period Ending</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-purple-500 border-2 border-purple-300 relative">
+                        <div className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-white rounded-full border border-purple-400"></div>
+                      </div>
+                      <span className="text-xs">Caregiver Handover</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
+                      <span className="text-xs">Today</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-gray-400 opacity-60"></div>
+                      <span className="text-xs">Past/Completed</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={autoRotationSettings.enabled ? "default" : "secondary"} className="text-xs">
+                      Auto-Rotation {autoRotationSettings.enabled ? 'ON' : 'OFF'}
+                    </Badge>
+                    <div className="text-xs text-muted-foreground">
+                      Today: {new Date().toLocaleDateString()}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Calendar Filter Summary */}
+                <div className="mt-2 pt-2 border-t border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-muted-foreground">
+                      <span className="font-medium">Showing:</span> Current and next periods, plus recent past shifts (3 days). 
+                      Past shifts appear in grey. Older periods are hidden.
+                    </div>
+                    {/* Quick transition preview */}
+                    <div className="text-xs text-muted-foreground">
+                      {getWeekDates(currentDate).some(date => {
+                        return caregivers.some(caregiver => {
+                          const { current } = getShiftPeriods(caregiver.caregiver_id);
+                          return current && date.getTime() === current.endDate.getTime() && 
+                                 findNextCaregiverForDate(date, caregiver.caregiver_id);
+                        });
+                      }) && (
+                        <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded text-xs">
+                          Handovers this week
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            
+            <CardContent>
+              {/* Enhanced Calendar Header */}
+              <div className="grid grid-cols-8 gap-1 mb-6">
+                <div className="p-3">
+                  <div className="text-sm font-medium text-muted-foreground">Time Slot</div>
+                </div>
+                {getWeekDates(currentDate).map((date, index) => {
+                  // Get all period information for this date across all caregivers
+                  const allPeriodInfo = caregivers.map(caregiver => {
+                    const caregiverId = caregiver.caregiver_id;
+                    const { current, next } = getShiftPeriods(caregiverId);
+                    const isCurrentPeriodEnding = current && isShiftPeriodAboutToEnd(caregiverId);
+                    
+                    return {
+                      caregiverId,
+                      caregiver,
+                      current,
+                      next,
+                      isCurrentPeriodEnding
+                    };
+                  });
+
+                  // Find what's happening on this specific date
+                  const periodIndicators = [];
+                  
+                  allPeriodInfo.forEach(({ caregiverId, caregiver, current, next, isCurrentPeriodEnding }) => {
+                    let indicatorType = null;
+                    let tooltipText = '';
+                    let isTransition = false;
+                    
+                    // Check if date falls in current period
+                    if (current && date >= current.startDate && date <= current.endDate) {
+                      indicatorType = isCurrentPeriodEnding ? 'ending' : 'current';
+                      tooltipText = `${getCaregiverName(caregiverId)} - Current ${current.type} period ${isCurrentPeriodEnding ? '(ending soon)' : ''}`;
+                      
+                      // Check if this is the last day of current period
+                      if (date.getTime() === current.endDate.getTime()) {
+                        // Look for who takes over next
+                        const nextCaregiver = findNextCaregiverForDate(date, caregiverId);
+                        
+                        if (nextCaregiver) {
+                          isTransition = true;
+                          tooltipText += ` → Next: ${getCaregiverName(nextCaregiver.caregiverId)} ${nextCaregiver.shiftType}`;
+                        }
+                      }
+                    }
+                    // Check if date falls in next period
+                    else if (next && date >= next.startDate && date <= next.endDate) {
+                      indicatorType = 'next';
+                      tooltipText = `${getCaregiverName(caregiverId)} - Next ${next.type} period`;
+                      
+                      // Check if this is the first day of next period
+                      if (date.getTime() === next.startDate.getTime()) {
+                        // Look for who this caregiver is taking over from
+                        const previousDay = new Date(date);
+                        previousDay.setDate(date.getDate() - 1);
+                        
+                        const previousCaregiverInfo = allPeriodInfo.find(info => 
+                          info.current && 
+                          info.caregiverId !== caregiverId &&
+                          info.current.endDate.getTime() === previousDay.getTime()
+                        );
+                        
+                        if (previousCaregiverInfo) {
+                          isTransition = true;
+                          tooltipText = `Transition: ${getCaregiverName(caregiverId)} takes over from ${getCaregiverName(previousCaregiverInfo.caregiverId)}`;
+                        }
+                      }
+                    }
+                    
+                    if (indicatorType) {
+                      periodIndicators.push({
+                        caregiver,
+                        indicatorType,
+                        tooltipText,
+                        isTransition
+                      });
+                    }
+                  });
+
+                  const shiftsOnDate = getShiftsForDate(date);
+                  const isToday = date.toDateString() === new Date().toDateString();
+
+                  return (
+                    <div key={index} className={`relative p-3 rounded-lg border-2 transition-all ${
+                      isToday 
+                        ? 'bg-yellow-50 border-yellow-300 shadow-md' 
+                        : 'bg-white border-gray-200 hover:border-gray-300'
+                    }`}>
+                      {/* Day header */}
+                      <div className="text-center">
+                        <div className="text-sm font-medium text-muted-foreground mb-1">
+                          {date.toLocaleDateString('en-US', { weekday: 'short' })}
+                        </div>
+                        <div className={`text-2xl font-bold mb-2 ${isToday ? 'text-yellow-700' : ''}`}>
+                          {date.getDate()}
+                        </div>
+                        {isToday && (
+                          <div className="text-xs font-medium text-yellow-700 bg-yellow-200 px-2 py-1 rounded-full mb-2">
+                            Today
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Shift summary */}
+                      {shiftsOnDate.length > 0 && (
+                        <div className="text-center mb-2">
+                          <div className="text-xs font-medium text-muted-foreground">
+                            {shiftsOnDate.length} shift{shiftsOnDate.length !== 1 ? 's' : ''}
+                          </div>
+                          <div className="flex justify-center gap-1 mt-1">
+                            {shiftsOnDate.filter(s => s.shift_type === 'Day').length > 0 && (
+                              <div className="w-3 h-3 bg-blue-500 rounded" title="Day shifts"></div>
+                            )}
+                            {shiftsOnDate.filter(s => s.shift_type === 'Night').length > 0 && (
+                              <div className="w-3 h-3 bg-purple-500 rounded" title="Night shifts"></div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Transition indicator */}
+                      {periodIndicators.some(p => p.isTransition) && (
+                        <div className="text-center mb-2">
+                          <div className="text-xs font-medium text-purple-700 bg-purple-100 px-2 py-1 rounded-full">
+                            Handover Day
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Period indicators */}
+                      {periodIndicators.length > 0 && (
+                        <div className="flex justify-center gap-1 flex-wrap">
+                          {periodIndicators.map(({ indicatorType, tooltipText, isTransition }, idx) => {
+                            let indicatorClass = '';
+                            
+                            if (isTransition) {
+                              indicatorClass = 'bg-purple-500 border-2 border-purple-300 animate-pulse shadow-lg';
+                            } else {
+                              switch (indicatorType) {
+                                case 'current':
+                                  indicatorClass = 'bg-blue-500 shadow-md';
+                                  break;
+                                case 'next':
+                                  indicatorClass = 'bg-green-500 shadow-md';
+                                  break;
+                                case 'ending':
+                                  indicatorClass = 'bg-orange-500 animate-pulse shadow-lg';
+                                  break;
+                              }
+                            }
+                            
+                            return (
+                              <div
+                                key={idx}
+                                className={`w-3 h-3 rounded-full ${indicatorClass} relative`}
+                                title={tooltipText}
+                              >
+                                {/* Add a small arrow for transitions */}
+                                {isTransition && (
+                                  <div className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-white rounded-full border border-purple-400"></div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Calendar Grid */}
+              <div className="grid grid-cols-1 gap-1">
+                {/* Time slots */}
+                {['Day (7AM-7PM)', 'Night (7PM-7AM)'].map((slot, slotIndex) => (
+                  <div key={slot} className="grid grid-cols-8 gap-1">
+                    {/* Time label */}
+                    <div className="text-xs text-muted-foreground p-2 border-r">
+                      <div className="font-medium">{slot}</div>
+                    </div>
+                    
+                    {/* Day columns */}
+                    {getWeekDates(currentDate).map((date, dayIndex) => {
+                      const dayShifts = getShiftsForDate(date);
+                      const slotShifts = dayShifts.filter(shift => 
+                        (slotIndex === 0 && shift.shift_type === 'Day') ||
+                        (slotIndex === 1 && shift.shift_type === 'Night')
+                      );
+
+                      return (
+                        <div key={dayIndex} className="min-h-[80px] p-1 border border-gray-100">
+                          {slotShifts.length === 0 ? (
+                            <div className="text-xs text-gray-400 p-2 text-center">
+                              No active shifts
+                            </div>
+                          ) : (
+                            slotShifts.map((shift, shiftIndex) => {
+                              const isAboutToEnd = isShiftAboutToEnd(shift);
+                              const { current, next } = getShiftPeriods(shift.caregiver_id);
+                              const isPeriodEnding = current && isShiftPeriodAboutToEnd(shift.caregiver_id);
+                              const shiftDate = shift.shift_date.toDate();
+                              const today = new Date();
+                              today.setHours(0, 0, 0, 0);
+                              const isToday = shiftDate.toDateString() === today.toDateString();
+                              const isPastShift = shiftDate < today;
+                              
+                              // Determine if this shift is part of current or next period
+                              let periodType = 'current'; // Default to current since we're filtering
+                              let periodLabel = 'Current';
+                              if (current && shiftDate >= current.startDate && shiftDate <= current.endDate) {
+                                periodType = 'current';
+                                periodLabel = 'Current';
+                              } else if (next && shiftDate >= next.startDate && shiftDate <= next.endDate) {
+                                periodType = 'next';
+                                periodLabel = 'Next';
+                              }
+                              
+                              // Override period type if shift is in the past
+                              if (isPastShift) {
+                                periodType = 'past';
+                                periodLabel = 'Past';
+                              }
+                            
+                            return (
+                              <div
+                                key={shiftIndex}
+                                className={`group relative text-xs p-3 rounded-lg mb-2 cursor-pointer transition-all duration-200 border hover:shadow-md ${
+                                  isPastShift 
+                                    ? 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100' 
+                                    : shift.shift_type === 'Day' 
+                                      ? 'bg-gradient-to-br from-blue-50 to-blue-100 text-blue-900 border-blue-200 hover:from-blue-100 hover:to-blue-200' 
+                                      : 'bg-gradient-to-br from-purple-50 to-purple-100 text-purple-900 border-purple-200 hover:from-purple-100 hover:to-purple-200'
+                                } ${
+                                  isToday ? 'ring-2 ring-yellow-400 ring-opacity-60 shadow-lg' : ''
+                                } ${
+                                  !isPastShift && periodType === 'current' && isPeriodEnding ? 'ring-2 ring-orange-400 ring-opacity-50' :
+                                  !isPastShift && periodType === 'next' ? 'ring-2 ring-green-400 ring-opacity-50' : ''
+                                }`}
+                                onClick={() => handleEditShift(shift)}
+                                title={`${getCaregiverName(shift.caregiver_id)} - ${periodLabel} ${shift.shift_type} shift${isToday ? ' (Today)' : ''}${isPastShift ? ' (Completed)' : ''}`}
+                              >
+                                {/* Status indicators */}
+                                <div className="absolute top-1 right-1 flex gap-1">
+                                  {isPastShift && (
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full opacity-70" title="Completed shift"></div>
+                                  )}
+                                  {!isPastShift && periodType === 'current' && isPeriodEnding && (
+                                    <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse" title="Period ending soon"></div>
+                                  )}
+                                  {!isPastShift && periodType === 'next' && (
+                                    <div className="w-2 h-2 bg-green-500 rounded-full" title="Next period"></div>
+                                  )}
+                                  {!isPastShift && periodType === 'current' && !isPeriodEnding && (
+                                    <div className="w-2 h-2 bg-blue-500 rounded-full" title="Current period"></div>
+                                  )}
+                                  {isToday && (
+                                    <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" title="Today"></div>
+                                  )}
+                                </div>
+                                
+                                {/* Caregiver info */}
+                                <div className="pr-6">
+                                  <div className="font-semibold truncate text-sm mb-1">
+                                    {getCaregiverName(shift.caregiver_id)}
+                                  </div>
+                                  
+                                  {/* Time and shift type */}
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="text-xs opacity-80">
+                                      {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
+                                    </div>
+                                    <Badge 
+                                      variant={isPastShift ? 'outline' : shift.shift_type === 'Day' ? 'default' : 'secondary'}
+                                      className={`text-xs h-5 ${
+                                        isPastShift 
+                                          ? 'opacity-60 border-gray-300 text-gray-500 bg-white' 
+                                          : shift.shift_type === 'Day'
+                                            ? 'bg-blue-600 text-white border-blue-600'
+                                            : 'bg-purple-600 text-white border-purple-600'
+                                      }`}
+                                    >
+                                      {shift.shift_type}
+                                    </Badge>
+                                  </div>
+                                  
+                                  {/* Status badges */}
+                                  <div className="flex gap-1 flex-wrap">
+                                    {isPastShift && (
+                                      <Badge variant="outline" className="text-xs h-5 opacity-60 border-gray-300 text-gray-500 bg-white">
+                                        Completed
+                                      </Badge>
+                                    )}
+                                    {!isPastShift && periodType === 'current' && isPeriodEnding && (
+                                      <Badge variant="destructive" className="text-xs h-5 bg-orange-600 border-orange-600">
+                                        Period End
+                                      </Badge>
+                                    )}
+                                    {!isPastShift && periodType === 'next' && (
+                                      <Badge variant="outline" className="text-xs h-5 border-green-300 text-green-700 bg-green-50">
+                                        Next
+                                      </Badge>
+                                    )}
+                                    {isToday && !isPastShift && (
+                                      <Badge variant="outline" className="text-xs h-5 border-yellow-400 text-yellow-700 bg-yellow-50">
+                                        Today
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Hover edit button */}
+                                <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0 bg-white/80 hover:bg-white border border-gray-200"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleEditShift(shift);
+                                    }}
+                                  >
+                                    <Edit className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Auto-Rotation Settings Dialog */}
+      <Dialog open={isAutoRotationDialogOpen} onOpenChange={setIsAutoRotationDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Auto-Rotation Settings</DialogTitle>
+            <DialogDescription>
+              Configure automatic caregiver shift rotation when shifts are about to end.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="autoRotationEnabled"
+                checked={autoRotationSettings.enabled}
+                onChange={(e) => setAutoRotationSettings(prev => ({ 
+                  ...prev, 
+                  enabled: e.target.checked 
+                }))}
+                className="rounded border-gray-300"
+              />
+              <Label htmlFor="autoRotationEnabled" className="text-sm font-medium">
+                Enable automatic rotation
+              </Label>
+            </div>
+            
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="leadTime" className="text-right text-sm">
+                Lead Time (hours)
+              </Label>
+              <Input
+                id="leadTime"
+                type="number"
+                min="1"
+                max="12"
+                value={autoRotationSettings.leadTimeHours}
+                onChange={(e) => setAutoRotationSettings(prev => ({ 
+                  ...prev, 
+                  leadTimeHours: parseInt(e.target.value) || 4 
+                }))}
+                className="col-span-3"
+                disabled={!autoRotationSettings.enabled}
+              />
+            </div>
+            
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="rotationPattern" className="text-right text-sm">
+                Rotation Pattern
+              </Label>
+              <Select 
+                value={autoRotationSettings.rotationPattern} 
+                onValueChange={(value: 'round-robin' | 'random') => 
+                  setAutoRotationSettings(prev => ({ ...prev, rotationPattern: value }))
+                }
+                disabled={!autoRotationSettings.enabled}
+              >
+                <SelectTrigger className="col-span-3">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="round-robin">Round Robin (Alphabetical)</SelectItem>
+                  <SelectItem value="random">Random Selection</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="text-xs text-muted-foreground mt-2">
+              <p>• Lead time determines how many hours before shift end to trigger rotation</p>
+              <p>• Round robin selects next caregiver alphabetically</p>
+              <p>• Random selection picks any available caregiver</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAutoRotationDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => {
+              setIsAutoRotationDialogOpen(false);
+              toast({
+                title: "Settings Updated",
+                description: `Auto-rotation ${autoRotationSettings.enabled ? 'enabled' : 'disabled'}`,
+              });
+            }}>
+              Save Settings
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View All Shifts Dialog */}
+      <Dialog open={isViewAllDialogOpen} onOpenChange={setIsViewAllDialogOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>
+              All Shifts for {getCaregiverName(selectedCaregiverShifts.caregiverId)}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedCaregiverShifts.shifts.length} total shift{selectedCaregiverShifts.shifts.length !== 1 ? 's' : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Shift Type</TableHead>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Notes</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {selectedCaregiverShifts.shifts.map((shift) => (
+                  <TableRow key={shift.shift_id}>
+                    <TableCell>{formatDate(shift.shift_date)}</TableCell>
+                    <TableCell>
+                      <Badge variant={shift.shift_type === 'Day' ? 'default' : 'secondary'}>
+                        {shift.shift_type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="max-w-xs truncate text-sm text-muted-foreground">
+                        {shift.notes || 'No notes'}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setIsViewAllDialogOpen(false);
+                            handleEditShift(shift);
+                          }}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteShift(shift.shift_id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsViewAllDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Edit Shift</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="caregiver" className="text-right">
+                Caregiver
+              </Label>
+              <Select 
+                value={editForm.caregiverId} 
+                onValueChange={(value) => setEditForm(prev => ({ ...prev, caregiverId: value }))}
+              >
+                <SelectTrigger className="col-span-3">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {caregivers.map(caregiver => (
+                    <SelectItem key={caregiver.caregiver_id} value={caregiver.caregiver_id}>
+                      {caregiver.first_name} {caregiver.last_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="date" className="text-right">
+                Date
+              </Label>
+              <Input
+                id="date"
+                type="date"
+                value={editForm.date}
+                onChange={(e) => setEditForm(prev => ({ ...prev, date: e.target.value }))}
+                className="col-span-3"
+              />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="shiftType" className="text-right">
+                Shift Type
+              </Label>
+              <Select 
+                value={editForm.shiftType} 
+                onValueChange={(value: 'Day' | 'Night') => setEditForm(prev => ({ ...prev, shiftType: value }))}
+              >
+                <SelectTrigger className="col-span-3">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Day">Day Shift</SelectItem>
+                  <SelectItem value="Night">Night Shift</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="startTime" className="text-right">
+                Start Time
+              </Label>
+              <Input
+                id="startTime"
+                type="time"
+                value={editForm.startTime}
+                onChange={(e) => setEditForm(prev => ({ ...prev, startTime: e.target.value }))}
+                className="col-span-3"
+              />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="endTime" className="text-right">
+                End Time
+              </Label>
+              <Input
+                id="endTime"
+                type="time"
+                value={editForm.endTime}
+                onChange={(e) => setEditForm(prev => ({ ...prev, endTime: e.target.value }))}
+                className="col-span-3"
+              />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="notes" className="text-right">
+                Notes
+              </Label>
+              <Input
+                id="notes"
+                placeholder="Optional notes..."
+                value={editForm.notes}
+                onChange={(e) => setEditForm(prev => ({ ...prev, notes: e.target.value }))}
+                className="col-span-3"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveShift}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default Schedule;

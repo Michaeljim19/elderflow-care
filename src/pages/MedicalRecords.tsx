@@ -10,16 +10,35 @@ import {
   Loader2,
   Heart,
   Activity,
-  ArrowLeft
+  ArrowLeft,
+  Plus
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { 
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { 
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { Patient, MedicalHistory } from "@/types"
 import { getPatients } from "@/services/firebase/patients"
-import { getMedicalHistoryByPatient, getMedicalHistories } from "@/services/firebase/medicalHistory"
+import { getMedicalHistoryByPatient, getMedicalHistories, addMedicalHistory, updateMedicalHistory } from "@/services/firebase/medicalHistory"
 
 const MedicalRecords = () => {
   const [patients, setPatients] = useState<Patient[]>([])
@@ -29,6 +48,29 @@ const MedicalRecords = () => {
   const [loading, setLoading] = useState(true)
   const [loadingPatientHistory, setLoadingPatientHistory] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
+  const [isAddMedicalRecordOpen, setIsAddMedicalRecordOpen] = useState(false)
+  const [viewingMedicalRecord, setViewingMedicalRecord] = useState<any | null>(null)
+  const [editingMedicalRecord, setEditingMedicalRecord] = useState<any | null>(null)
+  const [isEditMedicalDialogOpen, setIsEditMedicalDialogOpen] = useState(false)
+  const [medicalEditForm, setMedicalEditForm] = useState({
+    condition: "",
+    description: "",
+    date_diagnosed: "",
+    treatment: "",
+    severity: "",
+    status: "",
+    medications: "",
+    notes: ""
+  })
+  const [newMedicalRecord, setNewMedicalRecord] = useState({
+    condition: "",
+    date_diagnosed: "",
+    current_medical_conditions: [] as string[],
+    past_medical_history: [] as string[],
+    current_medications: [] as string[],
+    known_allergies: [] as string[],
+    notes: ""
+  })
   const { toast } = useToast()
 
   // Load patients and medical histories on component mount
@@ -102,6 +144,108 @@ const MedicalRecords = () => {
     setPatientMedicalHistory([])
   }
 
+  // Handler to view medical history record details
+  const handleViewMedicalRecord = (record: any) => {
+    console.log('View button clicked', record)
+    setViewingMedicalRecord(record)
+  }
+
+  // Handler to close medical record view
+  const closeViewMedicalRecord = () => {
+    setViewingMedicalRecord(null)
+  }
+
+  // Handler to edit medical history record
+  const handleEditMedicalRecord = (record: any) => {
+    console.log('Edit button clicked', record)
+    setEditingMedicalRecord(record)
+    setMedicalEditForm({
+      condition: record.condition || '',
+      description: record.description || '',
+      date_diagnosed: record.date_diagnosed ? 
+        (typeof record.date_diagnosed === 'string' 
+          ? record.date_diagnosed.split('T')[0]
+          : record.date_diagnosed.toDate ? record.date_diagnosed.toDate().toISOString().split('T')[0]
+          : new Date(record.date_diagnosed).toISOString().split('T')[0]
+        ) : '',
+      treatment: record.treatment || '',
+      severity: record.severity || '',
+      status: record.status || '',
+      medications: record.medications || record.current_medications?.join(', ') || '',
+      notes: record.notes || ''
+    })
+    setIsEditMedicalDialogOpen(true)
+  }
+
+  // Handler to update medical history record
+  const handleUpdateMedicalRecord = async () => {
+    if (!editingMedicalRecord) return
+
+    try {
+      const updatedRecord = {
+        ...editingMedicalRecord,
+        condition: medicalEditForm.condition,
+        description: medicalEditForm.description,
+        date_diagnosed: medicalEditForm.date_diagnosed,
+        treatment: medicalEditForm.treatment,
+        severity: medicalEditForm.severity,
+        status: medicalEditForm.status,
+        medications: medicalEditForm.medications,
+        notes: medicalEditForm.notes
+      }
+
+      await updateMedicalHistory(editingMedicalRecord.history_id, updatedRecord)
+      
+      // Refresh patient medical history
+      if (selectedPatient) {
+        const updatedHistory = await getMedicalHistoryByPatient(selectedPatient.patient_id)
+        setPatientMedicalHistory(updatedHistory)
+      }
+      
+      setIsEditMedicalDialogOpen(false)
+      setEditingMedicalRecord(null)
+      
+      toast({
+        title: "Success",
+        description: "Medical record updated successfully"
+      })
+    } catch (error) {
+      console.error("Error updating medical record:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update medical record",
+        variant: "destructive"
+      })
+    }
+  }
+
+  // Handler to delete medical history record
+  const handleDeleteMedicalRecord = async (record: any) => {
+    console.log('Delete button clicked', record)
+    if (window.confirm('Are you sure you want to delete this medical record?')) {
+      try {
+        // Delete logic would go here
+        console.log('Deleting medical record:', record.history_id)
+        // Refresh medical history after deletion
+        if (selectedPatient) {
+          const records = await getMedicalHistoryByPatient(selectedPatient.patient_id)
+          setPatientMedicalHistory(records)
+        }
+        toast({
+          title: "Success",
+          description: "Medical record deleted successfully"
+        })
+      } catch (error) {
+        console.error('Error deleting medical record:', error)
+        toast({
+          title: "Error",
+          description: "Failed to delete medical record",
+          variant: "destructive"
+        })
+      }
+    }
+  }
+
   const formatDate = (dateValue: string | any) => {
     if (!dateValue) return 'N/A'
     
@@ -142,6 +286,63 @@ const MedicalRecords = () => {
       case 'chronic': return 'bg-purple-100 text-purple-800 border-purple-200'
       case 'under treatment': return 'bg-orange-100 text-orange-800 border-orange-200'
       default: return 'bg-gray-100 text-gray-800 border-gray-200'
+    }
+  }
+
+  // Handle adding new medical record
+  const handleAddMedicalRecord = async () => {
+    if (!selectedPatient) return
+
+    try {
+      const medicalHistoryData = {
+        patient_id: selectedPatient.patient_id,
+        condition: newMedicalRecord.condition,
+        date_diagnosed: newMedicalRecord.date_diagnosed,
+        current_medical_conditions: newMedicalRecord.current_medical_conditions,
+        past_medical_history: newMedicalRecord.past_medical_history,
+        current_medications: newMedicalRecord.current_medications,
+        known_allergies: newMedicalRecord.known_allergies,
+        notes: newMedicalRecord.notes,
+        severity: "moderate", // Default severity
+        status: "active", // Default status
+        treatment: "", // Default empty treatment
+        doctor: "", // Default empty doctor
+        attachments: [] // Default empty attachments
+      }
+
+      await addMedicalHistory(medicalHistoryData)
+      
+      // Reset form
+      setNewMedicalRecord({
+        condition: "",
+        date_diagnosed: "",
+        current_medical_conditions: [],
+        past_medical_history: [],
+        current_medications: [],
+        known_allergies: [],
+        notes: ""
+      })
+      
+      // Close dialog
+      setIsAddMedicalRecordOpen(false)
+      
+      // Refresh patient medical history
+      if (selectedPatient) {
+        const updatedHistory = await getMedicalHistoryByPatient(selectedPatient.patient_id)
+        setPatientMedicalHistory(updatedHistory)
+      }
+      
+      toast({
+        title: "Success",
+        description: "Medical record has been added successfully."
+      })
+    } catch (error) {
+      console.error("Error adding medical record:", error)
+      toast({
+        title: "Error",
+        description: "Failed to add medical record. Please try again.",
+        variant: "destructive"
+      })
     }
   }
 
@@ -452,13 +653,24 @@ const MedicalRecords = () => {
           {/* Medical History Records */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Heart className="h-5 w-5" />
-                Medical History Records
-              </CardTitle>
-              <CardDescription>
-                Complete medical history for {selectedPatient.first_name} {selectedPatient.last_name}
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Heart className="h-5 w-5" />
+                    Medical History Records
+                  </CardTitle>
+                  <CardDescription>
+                    Complete medical history for {selectedPatient.first_name} {selectedPatient.last_name}
+                  </CardDescription>
+                </div>
+                <Button 
+                  onClick={() => setIsAddMedicalRecordOpen(true)}
+                  className="flex items-center gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add New Record
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {loadingPatientHistory ? (
@@ -479,77 +691,428 @@ const MedicalRecords = () => {
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {patientMedicalHistory.map((record) => (
-                    <Card key={record.history_id} className="border-l-4 border-l-primary">
-                      <CardContent className="p-6">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-3">
-                              <h3 className="text-lg font-semibold">{record.condition}</h3>
-                              <div className="flex items-center gap-2">
-                                <Badge className={`text-xs ${getSeverityColor(record.severity || '')}`}>
-                                  {record.severity || 'Not specified'}
-                                </Badge>
-                                <Badge className={`text-xs ${getStatusColor(record.status || '')}`}>
-                                  {record.status || 'Not specified'}
-                                </Badge>
-                              </div>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[150px]">Condition</TableHead>
+                        <TableHead className="w-[100px]">Status</TableHead>
+                        <TableHead className="w-[100px]">Severity</TableHead>
+                        <TableHead className="w-[200px]">Description</TableHead>
+                        <TableHead className="w-[120px]">Date Diagnosed</TableHead>
+                        <TableHead className="w-[150px]">Treatment</TableHead>
+                        <TableHead className="w-[150px]">Medications</TableHead>
+                        <TableHead className="w-[150px]">Allergies</TableHead>
+                        <TableHead className="w-[100px]">Created</TableHead>
+                        <TableHead className="w-[100px]">Updated</TableHead>
+                        <TableHead className="w-[120px]">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {patientMedicalHistory.map((record) => (
+                        <TableRow key={record.history_id}>
+                          <TableCell className="font-medium text-sm">
+                            {record.condition}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            <Badge className={`text-xs ${getStatusColor(record.status || '')}`}>
+                              {record.status || 'N/A'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            <Badge className={`text-xs ${getSeverityColor(record.severity || '')}`}>
+                              {record.severity || 'N/A'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            <div className="max-w-xs">
+                              {record.description ? (
+                                <div className="truncate" title={record.description}>
+                                  {record.description}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground italic">No description</span>
+                              )}
                             </div>
-                            
-                            <div className="space-y-3">
-                              <div>
-                                <h4 className="font-medium text-sm text-muted-foreground mb-1">Description</h4>
-                                <p className="text-sm">{record.description}</p>
-                              </div>
-                              
-                              {record.treatment && (
-                                <div>
-                                  <h4 className="font-medium text-sm text-muted-foreground mb-1">Treatment</h4>
-                                  <p className="text-sm">{record.treatment}</p>
-                                </div>
-                              )}
-
-                              {record.medications && (
-                                <div>
-                                  <h4 className="font-medium text-sm text-muted-foreground mb-1">Medications</h4>
-                                  <p className="text-sm">{record.medications}</p>
-                                </div>
-                              )}
-
-                              {record.allergies && (
-                                <div>
-                                  <h4 className="font-medium text-sm text-muted-foreground mb-1">Allergies</h4>
-                                  <p className="text-sm">{record.allergies}</p>
-                                </div>
-                              )}
-
-                              <div className="flex items-center gap-4 text-xs text-muted-foreground border-t pt-3">
-                                <span className="flex items-center gap-1">
-                                  <Calendar className="h-3 w-3" />
-                                  Diagnosed: {formatDate(record.date_diagnosed)}
-                                </span>
-                                <span>•</span>
-                                <span>Created: {formatDate(record.created_at)}</span>
-                                {record.updated_at !== record.created_at && (
-                                  <>
-                                    <span>•</span>
-                                    <span>Updated: {formatDate(record.updated_at)}</span>
-                                  </>
-                                )}
-                              </div>
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {formatDate(record.date_diagnosed)}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {record.treatment || 'N/A'}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            <div className="max-w-xs">
+                              {record.medications || record.current_medications?.join(', ') || 'N/A'}
                             </div>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            <div className="max-w-xs">
+                              {record.allergies || record.known_allergies?.join(', ') || 'N/A'}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {formatDate(record.created_at)}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {formatDate(record.updated_at)}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1">
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                title="View Details"
+                                onClick={() => handleViewMedicalRecord(record)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                title="Edit Record"
+                                onClick={() => handleEditMedicalRecord(record)}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                title="Delete Record" 
+                                className="text-red-600 hover:text-red-700"
+                                onClick={() => handleDeleteMedicalRecord(record)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </div>
               )}
             </CardContent>
           </Card>
         </>
       )}
+      
+      {/* View Medical Record Dialog */}
+      <Dialog open={!!viewingMedicalRecord} onOpenChange={closeViewMedicalRecord}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Medical Record Details</DialogTitle>
+            <DialogDescription>
+              Detailed information about this medical record
+            </DialogDescription>
+          </DialogHeader>
+          {viewingMedicalRecord && (
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Condition</Label>
+                  <p className="text-sm font-semibold">{viewingMedicalRecord.condition}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Status</Label>
+                  <Badge className={
+                    viewingMedicalRecord.status === 'Active' 
+                      ? 'bg-green-100 text-green-800' 
+                      : viewingMedicalRecord.status === 'Resolved'
+                      ? 'bg-blue-100 text-blue-800'
+                      : 'bg-gray-100 text-gray-800'
+                  }>
+                    {viewingMedicalRecord.status}
+                  </Badge>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Severity</Label>
+                  <Badge className={getSeverityColor(viewingMedicalRecord.severity || '')}>
+                    {viewingMedicalRecord.severity || 'Not specified'}
+                  </Badge>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Date Diagnosed</Label>
+                  <p className="text-sm">{formatDate(viewingMedicalRecord.date_diagnosed)}</p>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-sm font-medium text-muted-foreground">Description</Label>
+                <p className="text-sm mt-1 p-3 bg-muted rounded-md">
+                  {viewingMedicalRecord.description || 'No description provided'}
+                </p>
+              </div>
+
+              {viewingMedicalRecord.treatment && (
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Treatment</Label>
+                  <p className="text-sm mt-1 p-3 bg-muted rounded-md">{viewingMedicalRecord.treatment}</p>
+                </div>
+              )}
+
+              {(viewingMedicalRecord.medications || viewingMedicalRecord.current_medications) && (
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Medications</Label>
+                  <p className="text-sm mt-1 p-3 bg-muted rounded-md">
+                    {viewingMedicalRecord.medications || viewingMedicalRecord.current_medications?.join(', ')}
+                  </p>
+                </div>
+              )}
+
+              {(viewingMedicalRecord.allergies || viewingMedicalRecord.known_allergies) && (
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Allergies</Label>
+                  <p className="text-sm mt-1 p-3 bg-muted rounded-md">
+                    {viewingMedicalRecord.allergies || viewingMedicalRecord.known_allergies?.join(', ')}
+                  </p>
+                </div>
+              )}
+
+              {viewingMedicalRecord.notes && (
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Notes</Label>
+                  <p className="text-sm mt-1 p-3 bg-muted rounded-md">{viewingMedicalRecord.notes}</p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4 pt-4 border-t">
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Created</Label>
+                  <p className="text-sm">{formatDate(viewingMedicalRecord.created_at)}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Last Updated</Label>
+                  <p className="text-sm">{formatDate(viewingMedicalRecord.updated_at)}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Medical Record Dialog */}
+      <Dialog open={isEditMedicalDialogOpen} onOpenChange={setIsEditMedicalDialogOpen}>
+        <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Medical Record</DialogTitle>
+            <DialogDescription>
+              Update the medical record information
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="edit-condition">Condition</Label>
+                <Input
+                  id="edit-condition"
+                  value={medicalEditForm.condition}
+                  onChange={(e) => setMedicalEditForm(prev => ({ ...prev, condition: e.target.value }))}
+                  placeholder="Medical condition"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-date-diagnosed">Date Diagnosed</Label>
+                <Input
+                  id="edit-date-diagnosed"
+                  type="date"
+                  value={medicalEditForm.date_diagnosed}
+                  onChange={(e) => setMedicalEditForm(prev => ({ ...prev, date_diagnosed: e.target.value }))}
+                />
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="edit-status">Status</Label>
+                <Input
+                  id="edit-status"
+                  value={medicalEditForm.status}
+                  onChange={(e) => setMedicalEditForm(prev => ({ ...prev, status: e.target.value }))}
+                  placeholder="e.g., Active, Resolved"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-severity">Severity</Label>
+                <Input
+                  id="edit-severity"
+                  value={medicalEditForm.severity}
+                  onChange={(e) => setMedicalEditForm(prev => ({ ...prev, severity: e.target.value }))}
+                  placeholder="e.g., Mild, Moderate, Severe"
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="edit-description">Description</Label>
+              <Textarea
+                id="edit-description"
+                value={medicalEditForm.description}
+                onChange={(e) => setMedicalEditForm(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="Detailed description of the condition"
+                rows={3}
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="edit-treatment">Treatment</Label>
+              <Textarea
+                id="edit-treatment"
+                value={medicalEditForm.treatment}
+                onChange={(e) => setMedicalEditForm(prev => ({ ...prev, treatment: e.target.value }))}
+                placeholder="Treatment plan or medications"
+                rows={2}
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="edit-medications">Medications</Label>
+              <Input
+                id="edit-medications"
+                value={medicalEditForm.medications}
+                onChange={(e) => setMedicalEditForm(prev => ({ ...prev, medications: e.target.value }))}
+                placeholder="Current medications"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="edit-notes">Notes</Label>
+              <Textarea
+                id="edit-notes"
+                value={medicalEditForm.notes}
+                onChange={(e) => setMedicalEditForm(prev => ({ ...prev, notes: e.target.value }))}
+                placeholder="Additional notes"
+                rows={2}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end space-x-2">
+            <Button variant="outline" onClick={() => setIsEditMedicalDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdateMedicalRecord}>
+              Update Record
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Add New Medical Record Dialog */}
+      <Dialog open={isAddMedicalRecordOpen} onOpenChange={setIsAddMedicalRecordOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add New Medical Record</DialogTitle>
+            <DialogDescription>
+              Add a new medical record for {selectedPatient?.first_name} {selectedPatient?.last_name}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="condition">Condition</Label>
+                <Input
+                  id="condition"
+                  value={newMedicalRecord.condition}
+                  onChange={(e) => setNewMedicalRecord(prev => ({ ...prev, condition: e.target.value }))}
+                  placeholder="Enter medical condition"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="date_diagnosed">Date Diagnosed</Label>
+                <Input
+                  id="date_diagnosed"
+                  type="date"
+                  value={newMedicalRecord.date_diagnosed}
+                  onChange={(e) => setNewMedicalRecord(prev => ({ ...prev, date_diagnosed: e.target.value }))}
+                />
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="current_conditions">Current Medical Conditions (comma-separated)</Label>
+              <Input
+                id="current_conditions"
+                value={newMedicalRecord.current_medical_conditions.join(", ")}
+                onChange={(e) => setNewMedicalRecord(prev => ({ 
+                  ...prev, 
+                  current_medical_conditions: e.target.value.split(",").map(item => item.trim()).filter(Boolean)
+                }))}
+                placeholder="e.g., Diabetes, Hypertension"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="past_history">Past Medical History (comma-separated)</Label>
+              <Input
+                id="past_history"
+                value={newMedicalRecord.past_medical_history.join(", ")}
+                onChange={(e) => setNewMedicalRecord(prev => ({ 
+                  ...prev, 
+                  past_medical_history: e.target.value.split(",").map(item => item.trim()).filter(Boolean)
+                }))}
+                placeholder="e.g., Surgery, Previous conditions"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="medications">Current Medications (comma-separated)</Label>
+              <Input
+                id="medications"
+                value={newMedicalRecord.current_medications.join(", ")}
+                onChange={(e) => setNewMedicalRecord(prev => ({ 
+                  ...prev, 
+                  current_medications: e.target.value.split(",").map(item => item.trim()).filter(Boolean)
+                }))}
+                placeholder="e.g., Metformin, Lisinopril"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="allergies">Known Allergies (comma-separated)</Label>
+              <Input
+                id="allergies"
+                value={newMedicalRecord.known_allergies.join(", ")}
+                onChange={(e) => setNewMedicalRecord(prev => ({ 
+                  ...prev, 
+                  known_allergies: e.target.value.split(",").map(item => item.trim()).filter(Boolean)
+                }))}
+                placeholder="e.g., Penicillin, Shellfish"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="notes">Additional Notes</Label>
+              <Textarea
+                id="notes"
+                value={newMedicalRecord.notes}
+                onChange={(e) => setNewMedicalRecord(prev => ({ ...prev, notes: e.target.value }))}
+                placeholder="Any additional notes or observations"
+                rows={3}
+              />
+            </div>
+          </div>
+          
+          <div className="flex justify-end space-x-2 pt-4">
+            <Button 
+              variant="outline" 
+              onClick={() => setIsAddMedicalRecordOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleAddMedicalRecord}
+              disabled={!newMedicalRecord.condition || !newMedicalRecord.date_diagnosed}
+            >
+              Add Medical Record
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

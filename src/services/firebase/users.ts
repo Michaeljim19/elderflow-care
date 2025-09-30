@@ -4,6 +4,7 @@ import {
   getDocs, 
   getDoc, 
   addDoc, 
+  setDoc,
   updateDoc, 
   deleteDoc, 
   query, 
@@ -45,6 +46,7 @@ export const createUser = async (userData: {
   contact_number: string;
   address: string;
   middle_name?: string;
+  birthday?: string;
 }) => {
   try {
     console.log('Creating user document (no auth):', userData);
@@ -64,10 +66,16 @@ export const createUser = async (userData: {
 
     // Only add optional fields if they have values
     if (userData.middle_name) coreUserData.middle_name = userData.middle_name;
+    if (userData.birthday) coreUserData.birthday = userData.birthday;
     
     // Save to users collection - let Firestore auto-generate document ID
     const userDocRef = await addDoc(collection(db, 'users'), coreUserData);
     const user_id = userDocRef.id; // Use Firestore document ID as user_id
+    
+    // Update the document to include the user_id field
+    await updateDoc(userDocRef, {
+      user_id: user_id
+    });
     
     console.log('✅ Created user document:', {
       user_id: user_id,
@@ -84,6 +92,63 @@ export const createUser = async (userData: {
   } catch (error: any) {
     console.error('Error creating user document:', error);
     throw new Error(`Failed to create user document: ${error.message}`);
+  }
+};
+
+// Create a user document with a specific document ID
+export const createUserWithId = async (
+  documentId: string,
+  userData: {
+    first_name: string;
+    last_name: string;
+    email?: string;
+    role: 'Patient' | 'Caregiver' | 'Admin' | 'Guardian';
+    contact_number: string;
+    address: string;
+    middle_name?: string;
+    birthday?: string;
+  }
+) => {
+  try {
+    console.log('Creating user document with specific ID:', documentId, userData);
+    
+    // Create user document in Firestore with specific ID - ONLY core user data
+    const coreUserData: any = {
+      user_id: documentId, // Set the user_id to match the document ID
+      first_name: userData.first_name,
+      last_name: userData.last_name,
+      email: userData.email || '',
+      role: userData.role,
+      contact_number: userData.contact_number,
+      address: userData.address,
+      created_at: Timestamp.now(),
+      updated_at: Timestamp.now(),
+      is_active: true
+    };
+
+    // Only add optional fields if they have values
+    if (userData.middle_name) coreUserData.middle_name = userData.middle_name;
+    if (userData.birthday) coreUserData.birthday = userData.birthday;
+    
+    // Save to users collection with specific document ID
+    const userDocRef = doc(db, 'users', documentId);
+    await setDoc(userDocRef, coreUserData);
+    
+    console.log('✅ Created user document with ID:', {
+      user_id: documentId,
+      email: userData.email,
+      role: userData.role
+    });
+
+    return {
+      user_id: documentId,
+      email: userData.email || '',
+      documentId: documentId
+    };
+    
+  } catch (error: any) {
+    console.error('Error creating user document with ID:', error);
+    throw new Error(`Failed to create user document with ID: ${error.message}`);
   }
 };
 
@@ -128,6 +193,7 @@ export const createCaregiverUserAccount = async (caregiverData: any) => {
     // Filter out undefined values to prevent Firestore errors
     const userData: any = {
       uid: user.uid,
+      user_id: user.uid, // Add user_id field
       email: user.email,
       role: 'caregiver',
       user_lvl: 'caregiver',
@@ -281,6 +347,7 @@ export const getUsersByRole = async (role: string) => {
   }
 };
 
+// Migration function to ensure existing users have uid and user_id set to document ID
 // Get caregivers from users collection
 export const getCaregivers = async (): Promise<Caregiver[]> => {
   try {
@@ -291,7 +358,6 @@ export const getCaregivers = async (): Promise<Caregiver[]> => {
     // Convert User objects to Caregiver-compatible objects
     return caregiverUsers.map(user => ({
       caregiver_id: user.uid,
-      user_id: user.uid,
       first_name: user.first_name,
       last_name: user.last_name,
       middle_name: user.middle_name,

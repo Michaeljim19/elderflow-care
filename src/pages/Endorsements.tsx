@@ -28,6 +28,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { 
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Dialog,
@@ -247,8 +255,8 @@ const PatientHandoverReports = () => {
   });
 
   const filteredReports = reports.filter(report => {
-    const matchesSearch = report.patient_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         report.caregiver_name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (report.patient_name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+                         (report.caregiver_name?.toLowerCase() || '').includes(searchTerm.toLowerCase());
     const matchesShift = filterShift === "all" || report.shift_type === filterShift;
     const matchesStatus = filterStatus === "all" || report.status === filterStatus;
     
@@ -691,10 +699,19 @@ const PatientHandoverReports = () => {
       </div>
 
       {/* Reports List */}
-      <div className="space-y-4">
-        {filteredReports.length === 0 ? (
-          <Card>
-            <CardContent className="text-center py-12">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5" />
+            Handover Reports
+          </CardTitle>
+          <CardDescription>
+            Patient handover reports organized in an easy-to-read table format
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {filteredReports.length === 0 ? (
+            <div className="text-center py-12">
               <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">No handover reports found</h3>
               <p className="text-gray-600 mb-4">
@@ -703,130 +720,138 @@ const PatientHandoverReports = () => {
                   : 'Create your first handover report to get started'
                 }
               </p>
-            </CardContent>
-          </Card>
-        ) : (
-          filteredReports.map((report) => (
-            <Card key={report.id} className="hover:shadow-lg transition-shadow">
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                      <User className="h-6 w-6 text-blue-600" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-gray-900">{report.patient_name}</h3>
-                      <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <span>{report.caregiver_name}</span>
-                        <span>•</span>
-                        <Badge variant="outline" className={report.shift_type === 'Day' ? 'bg-yellow-50 text-yellow-700' : 'bg-blue-50 text-blue-700'}>
-                          {report.shift_type} Shift
-                        </Badge>
-                        <span>•</span>
-                        <span>{formatTime(report.created_at)}</span>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Patient</TableHead>
+                  <TableHead>Caregiver</TableHead>
+                  <TableHead>Shift</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Priority</TableHead>
+                  <TableHead>Vital Signs</TableHead>
+                  <TableHead>Concerns</TableHead>
+                  <TableHead>Instructions</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredReports.map((report) => (
+                  <TableRow key={report.id} className="hover:bg-muted/50">
+                    <TableCell className="font-medium">
+                      {report.patient_name}
+                    </TableCell>
+                    <TableCell>
+                      {report.caregiver_name}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={report.shift_type === 'Day' ? 'bg-yellow-50 text-yellow-700' : 'bg-blue-50 text-blue-700'}>
+                        {report.shift_type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <div>
+                        <div className="font-medium">{report.shift_date}</div>
+                        <div className="text-muted-foreground">{formatTime(report.created_at)}</div>
                       </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <Badge className={getStatusColor(report.status)} variant="outline">
-                      {report.status}
-                    </Badge>
-                    <Badge className={getPriorityColor(report.priority)} variant="outline">
-                      {report.priority}
-                    </Badge>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleViewReport(report)}
-                      className="gap-2"
-                    >
-                      <Eye className="h-4 w-4" />
-                      View
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={getStatusColor(report.status)} variant="outline">
+                        {report.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={getPriorityColor(report.priority)} variant="outline">
+                        {report.priority}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <div className="space-y-1">
+                        <div><span className="text-muted-foreground">BP:</span> {report.vital_signs?.blood_pressure || 'N/A'}</div>
+                        <div><span className="text-muted-foreground">HR:</span> {report.vital_signs?.heart_rate || 'N/A'}</div>
+                        <div><span className="text-muted-foreground">Temp:</span> {report.vital_signs?.temperature || 'N/A'}</div>
+                        <div><span className="text-muted-foreground">O2:</span> {report.vital_signs?.oxygen_saturation || 'N/A'}</div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="max-w-xs">
+                        {report.concerns ? (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2">
+                            <div className="flex items-start gap-1">
+                              <AlertCircle className="h-3 w-3 text-yellow-600 mt-0.5 flex-shrink-0" />
+                              <p className="text-xs text-yellow-700 truncate">{report.concerns}</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">No concerns</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="max-w-xs">
+                        {report.instructions_for_next_shift ? (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-2">
+                            <div className="flex items-start gap-1">
+                              <ArrowRight className="h-3 w-3 text-blue-600 mt-0.5 flex-shrink-0" />
+                              <p className="text-xs text-blue-700 truncate">{report.instructions_for_next_shift}</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">No instructions</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => handleViewReport(report)}
+                          title="View Details"
                         >
-                          <Trash2 className="h-4 w-4" />
-                          Delete
+                          <Eye className="h-4 w-4" />
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Handover Report</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Are you sure you want to delete this handover report for {report.patient_name}? 
-                            This action cannot be undone.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction 
-                            onClick={() => handleDeleteReport(report.id, report.patient_name)}
-                            className="bg-red-600 hover:bg-red-700"
-                          >
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-                </div>
-
-                {/* Quick Preview */}
-                <div className="space-y-3">
-                  {report.concerns && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                      <div className="flex items-start gap-2">
-                        <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
-                        <div>
-                          <p className="text-sm font-medium text-yellow-800">Concerns:</p>
-                          <p className="text-sm text-yellow-700">{report.concerns}</p>
-                        </div>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                              title="Delete Report"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete Handover Report</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Are you sure you want to delete this handover report for {report.patient_name}? 
+                                This action cannot be undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction 
+                                onClick={() => handleDeleteReport(report.id, report.patient_name)}
+                                className="bg-red-600 hover:bg-red-700"
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
-                    </div>
-                  )}
-
-                  {report.instructions_for_next_shift && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                      <div className="flex items-start gap-2">
-                        <ArrowRight className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
-                        <div>
-                          <p className="text-sm font-medium text-blue-800">Instructions for Next Shift:</p>
-                          <p className="text-sm text-blue-700">{report.instructions_for_next_shift}</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-500">Blood Pressure:</span>
-                      <span className="ml-1 font-medium">{report.vital_signs.blood_pressure}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Heart Rate:</span>
-                      <span className="ml-1 font-medium">{report.vital_signs.heart_rate}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Temperature:</span>
-                      <span className="ml-1 font-medium">{report.vital_signs.temperature}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">O2 Sat:</span>
-                      <span className="ml-1 font-medium">{report.vital_signs.oxygen_saturation}</span>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {/* View Report Modal */}
       <Dialog open={isViewReportOpen} onOpenChange={setIsViewReportOpen}>
@@ -879,19 +904,19 @@ const PatientHandoverReports = () => {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
                       <Label className="text-sm text-gray-500">Blood Pressure</Label>
-                      <p className="font-medium">{selectedReport.vital_signs.blood_pressure}</p>
+                      <p className="font-medium">{selectedReport.vital_signs?.blood_pressure || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm text-gray-500">Heart Rate</Label>
-                      <p className="font-medium">{selectedReport.vital_signs.heart_rate}</p>
+                      <p className="font-medium">{selectedReport.vital_signs?.heart_rate || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm text-gray-500">Temperature</Label>
-                      <p className="font-medium">{selectedReport.vital_signs.temperature}</p>
+                      <p className="font-medium">{selectedReport.vital_signs?.temperature || 'N/A'}</p>
                     </div>
                     <div>
                       <Label className="text-sm text-gray-500">Oxygen Saturation</Label>
-                      <p className="font-medium">{selectedReport.vital_signs.oxygen_saturation}</p>
+                      <p className="font-medium">{selectedReport.vital_signs?.oxygen_saturation || 'N/A'}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -907,17 +932,21 @@ const PatientHandoverReports = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
-                    {selectedReport.medications_given.map((med, index) => (
-                      <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                        <span className="font-medium">{med.name}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-gray-600">{med.time}</span>
-                          <Badge variant={med.status === 'Given' ? 'default' : 'destructive'}>
-                            {med.status}
-                          </Badge>
+                    {selectedReport.medications_given?.length > 0 ? (
+                      selectedReport.medications_given.map((med, index) => (
+                        <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                          <span className="font-medium">{med.name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-600">{med.time}</span>
+                            <Badge variant={med.status === 'Given' ? 'default' : 'destructive'}>
+                              {med.status}
+                            </Badge>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-sm">No medications recorded</p>
+                    )}
                   </div>
                 </CardContent>
               </Card>

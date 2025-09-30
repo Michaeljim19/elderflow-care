@@ -11,7 +11,8 @@ import {
   LogOut,
   User,
   Settings,
-  Database
+  Database,
+  Bell
 } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
@@ -58,6 +59,12 @@ const navigationItems = [
     url: "/medications", 
     icon: Pill,
     description: "Medication Tracking"
+  },
+  { 
+    title: "Reminders", 
+    url: "/reminders", 
+    icon: Bell,
+    description: "Medication Reminders"
   },
   { 
     title: "Medical Records", 
@@ -125,7 +132,8 @@ export function AppSidebar() {
     }
   }
 
-  const getInitials = (firstName: string, lastName: string) => {
+  const getInitials = (firstName?: string, lastName?: string) => {
+    if (!firstName || !lastName) return 'U'
     return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase()
   }
 
@@ -207,16 +215,19 @@ export function AppSidebar() {
                 >
                   <Avatar className="h-8 w-8">
                     <AvatarFallback className="bg-primary/10 text-primary">
-                      {getInitials(userData.firstName, userData.lastName)}
+                      {userData?.firstName && userData?.lastName 
+                        ? getInitials(userData.firstName, userData.lastName)
+                        : 'U'
+                      }
                     </AvatarFallback>
                   </Avatar>
                   {!collapsed && (
                     <div className="ml-3 flex-1 text-left">
                       <div className="text-sm font-medium">
-                        {userData.firstName} {userData.lastName}
+                        {userData?.firstName || 'Unknown'} {userData?.lastName || 'User'}
                       </div>
                       <div className="text-xs text-muted-foreground capitalize">
-                        {userData.role}
+                        {userData?.role || 'User'}
                       </div>
                     </div>
                   )}

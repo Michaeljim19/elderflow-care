@@ -11,6 +11,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import Dashboard from "@/components/Dashboard";
 import Patients from "./pages/Patients";
 import Medications from "./pages/Medications";
+import Reminders from "./pages/Reminders";
 import MedicalRecords from "./pages/MedicalRecords";
 import Caregivers from "./pages/Caregivers";
 import Schedule from "./pages/Schedule";
@@ -72,6 +73,7 @@ const App = () => {
                           <Route path="/" element={<Dashboard />} />
                           <Route path="/patients" element={<Patients />} />
                           <Route path="/medications" element={<Medications />} />
+                          <Route path="/reminders" element={<Reminders />} />
                           <Route path="/medical-records" element={<MedicalRecords />} />
                           <Route path="/caregivers" element={<Caregivers />} />
                           <Route path="/schedule" element={<Schedule />} />

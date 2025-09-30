@@ -16,7 +16,8 @@ import {
   UserCheck,
   Key,
   Settings,
-  Trash2
+  Trash2,
+  Calendar
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { 
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { 
   Select,
   SelectContent,
@@ -55,7 +64,7 @@ import { getPatients } from "@/services/firebase/patients";
 import { deleteUser } from "@/services/firebase/users";
 import { createAccount, getAccounts, updateAccount, deleteAccount, createFirebaseAuthForAccount, createFirebaseAuthForAllActiveAccounts, verifyAccount } from "@/services/firebase/accounts";
 import type { Caregiver, Patient, Account } from "@/types";
-import { collection, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, getDoc, updateDoc, deleteDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { db, auth } from "@/lib/firebase";
 import { migrateGuardianToPatient } from "@/scripts/migrateGuardianToPatient";
@@ -351,6 +360,8 @@ const Account = () => {
           
           if (!snapshot.empty) {
             const userDocRef = doc(db, 'users', snapshot.docs[0].id);
+            const userDoc = snapshot.docs[0];
+            
             await updateDoc(userDocRef, {
               accountId: accountId,
               generated_email: generatedEmail,
@@ -360,7 +371,8 @@ const Account = () => {
               verified: false,
               updated_at: serverTimestamp(),
             });
-            userDocId = snapshot.docs[0].id;
+            userDocId = userDoc.id;
+            
             console.log(`✅ Updated existing user ${userDocId} with accountId: ${accountId}`);
           } else {
             console.warn(`⚠️ No existing user found for caregiver email: ${formData.email}`);
@@ -565,6 +577,661 @@ const Account = () => {
     }
   }
 
+  // Debug function to check document ID mismatches
+  const handleDebugDocumentIds = async () => {
+    try {
+      console.log('=== DEBUGGING DOCUMENT ID MISMATCHES ===');
+      
+      // Get all patients and users
+      const patientsData = await getPatients();
+      const usersSnapshot = await getDocs(collection(db, 'users'));
+      const usersData = usersSnapshot.docs.map(doc => ({
+        documentId: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      console.log('📋 All Patients:', patientsData.map(p => ({
+        patient_id: p.patient_id,
+        user_id: p.user_id,
+        name: `${p.first_name} ${p.last_name}`,
+        email: p.email
+      })));
+      
+      console.log('📋 All Users:', usersData.map((u: any) => ({
+        documentId: u.documentId,
+        user_id: u.user_id,
+        name: `${u.first_name} ${u.last_name}`,
+        email: u.email,
+        role: u.role
+      })));
+      
+      // Check for mismatches
+      const patientUsers = usersData.filter((u: any) => u.role === 'Patient');
+      console.log('📋 Patient Users Only:', patientUsers);
+      
+      // Check each patient's document ID alignment
+      for (const patient of patientsData) {
+        const correspondingUser = usersData.find((u: any) => u.user_id === patient.user_id || u.email === patient.email);
+        console.log(`🔍 Patient ${patient.first_name} ${patient.last_name}:`, {
+          patient_document_id: patient.patient_id,
+          patient_user_id_field: patient.user_id,
+          user_document_id: correspondingUser?.documentId,
+          user_user_id_field: correspondingUser?.user_id,
+          ids_match: patient.patient_id === correspondingUser?.documentId,
+          user_found: !!correspondingUser
+        });
+      }
+      
+      toast({
+        title: "Debug Complete",
+        description: "Check the browser console for detailed document ID analysis."
+      });
+    } catch (error) {
+      console.error("Error debugging document IDs:", error);
+      toast({
+        title: "Debug Error",
+        description: "Failed to debug document IDs. Check console for errors.",
+        variant: "destructive"
+      });
+    }
+  }
+
+  // Migration function to fix document ID mismatches for caregivers
+  const handleMigrateCaregiverDocumentIds = async () => {
+    try {
+      console.log('=== STARTING CAREGIVER DOCUMENT ID MIGRATION ===');
+      
+      // Get all caregivers from caregivers collection (raw Firestore data)
+      const caregiversSnapshot = await getDocs(collection(db, 'caregivers'));
+      const usersSnapshot = await getDocs(collection(db, 'users'));
+      
+      const caregiversData = caregiversSnapshot.docs.map(doc => ({
+        documentId: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      const usersData = usersSnapshot.docs.map(doc => ({
+        documentId: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      let migratedCount = 0;
+      const caregiverUsers = usersData.filter((u: any) => u.role === 'Caregiver');
+      
+      for (const caregiverUser of caregiverUsers) {
+        // Find corresponding caregiver document by user_id or email
+        const correspondingCaregiver = caregiversData.find((c: any) => 
+          c.user_id === caregiverUser.user_id || 
+          c.user_id === caregiverUser.documentId ||
+          c.email === caregiverUser.email
+        );
+        
+        if (correspondingCaregiver && correspondingCaregiver.documentId !== caregiverUser.documentId) {
+          console.log(`🔄 Migrating caregiver: ${caregiverUser.first_name} ${caregiverUser.last_name}`);
+          console.log(`   User doc ID: ${caregiverUser.documentId}`);
+          console.log(`   Caregiver doc ID: ${correspondingCaregiver.documentId}`);
+          console.log(`   Will create new caregiver doc with unified ID: ${caregiverUser.documentId}`);
+          
+          // Create new caregiver document with user's document ID
+          const newCaregiverData = {
+            ...correspondingCaregiver,
+            caregiver_id: caregiverUser.documentId,
+            user_id: caregiverUser.documentId,
+            updated_at: serverTimestamp()
+          };
+          
+          // Remove the old documentId field from the data
+          delete newCaregiverData.documentId;
+          
+          // Use setDoc to create the caregiver document with unified ID
+          await setDoc(doc(db, 'caregivers', caregiverUser.documentId), newCaregiverData);
+          
+          // Delete the old caregiver document if it's different
+          if (correspondingCaregiver.documentId !== caregiverUser.documentId) {
+            await deleteDoc(doc(db, 'caregivers', correspondingCaregiver.documentId));
+          }
+          
+          migratedCount++;
+          console.log(`✅ Migrated caregiver: ${caregiverUser.first_name} ${caregiverUser.last_name}`);
+        }
+      }
+      
+      console.log(`=== CAREGIVER MIGRATION COMPLETE: ${migratedCount} caregivers migrated ===`);
+      
+      toast({
+        title: "Caregiver Migration Complete",
+        description: `Successfully migrated ${migratedCount} caregivers to unified document IDs.`,
+      });
+      
+      // Refresh the page data
+      window.location.reload();
+      
+    } catch (error) {
+      console.error("Error migrating caregiver document IDs:", error);
+      toast({
+        title: "Caregiver Migration Error",
+        description: "Failed to migrate caregiver document IDs. Check console for errors.",
+        variant: "destructive"
+      });
+    }
+  }
+
+  // Migration function to fix document ID mismatches for patients
+  const handleMigrateDocumentIds = async () => {
+    try {
+      console.log('=== STARTING DOCUMENT ID MIGRATION ===');
+      
+      // Get all patients from patients collection (raw Firestore data)
+      const patientsSnapshot = await getDocs(collection(db, 'patients'));
+      const usersSnapshot = await getDocs(collection(db, 'users'));
+      
+      const patientsData = patientsSnapshot.docs.map(doc => ({
+        documentId: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      const usersData = usersSnapshot.docs.map(doc => ({
+        documentId: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      let migratedCount = 0;
+      const patientUsers = usersData.filter((u: any) => u.role === 'Patient');
+      
+      for (const patientUser of patientUsers) {
+        // Find corresponding patient document by user_id or email
+        const correspondingPatient = patientsData.find((p: any) => 
+          p.user_id === patientUser.user_id || 
+          p.user_id === patientUser.documentId ||
+          p.email === patientUser.email
+        );
+        
+        if (correspondingPatient && correspondingPatient.documentId !== patientUser.documentId) {
+          console.log(`🔄 Migrating patient: ${patientUser.first_name} ${patientUser.last_name}`);
+          console.log(`   User doc ID: ${patientUser.documentId}`);
+          console.log(`   Patient doc ID: ${correspondingPatient.documentId}`);
+          console.log(`   Will create new patient doc with unified ID: ${patientUser.documentId}`);
+          
+          // Create new patient document with user's document ID
+          const newPatientData = {
+            ...correspondingPatient,
+            patient_id: patientUser.documentId,
+            user_id: patientUser.documentId,
+            updated_at: serverTimestamp()
+          };
+          
+          // Remove the old documentId field from the data
+          delete newPatientData.documentId;
+          
+          // Use setDoc to create or update the patient document with unified ID
+          await setDoc(doc(db, 'patients', patientUser.documentId), newPatientData);
+          
+          // Delete the old patient document if it's different
+          if (correspondingPatient.documentId !== patientUser.documentId) {
+            await deleteDoc(doc(db, 'patients', correspondingPatient.documentId));
+          }
+          
+          migratedCount++;
+          console.log(`✅ Migrated patient: ${patientUser.first_name} ${patientUser.last_name}`);
+        }
+      }
+      
+      console.log(`=== MIGRATION COMPLETE: ${migratedCount} patients migrated ===`);
+      
+      toast({
+        title: "Migration Complete",
+        description: `Successfully migrated ${migratedCount} patients to unified document IDs.`,
+      });
+      
+      // Refresh the page data
+      window.location.reload();
+      
+    } catch (error) {
+      console.error("Error migrating document IDs:", error);
+      toast({
+        title: "Migration Error",
+        description: "Failed to migrate document IDs. Check console for errors.",
+        variant: "destructive"
+      });
+    }
+  }
+
+  // Update patient and medical records to unified ID
+  const handleUpdatePatientToUnifiedId = async () => {
+    try {
+      const oldPatientId = prompt('Enter the old patient ID:');
+      const newUserId = prompt('Enter the new user ID (Firebase Auth UID):');
+      
+      if (!oldPatientId || !newUserId) {
+        toast({
+          title: "Invalid Input",
+          description: "Both old patient ID and new user ID are required.",
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      console.log('=== STARTING PATIENT TO UNIFIED ID UPDATE ===');
+      console.log(`Old Patient ID: ${oldPatientId}`);
+      console.log(`New User ID: ${newUserId}`);
+      
+      // Import the update function
+      const { updatePatientToUnifiedId } = await import('@/services/firebase/patients');
+      
+      // Perform the update
+      await updatePatientToUnifiedId(oldPatientId, newUserId);
+      
+      toast({
+        title: "Update Complete",
+        description: `Successfully updated patient ${oldPatientId} to unified ID ${newUserId}`,
+      });
+      
+      // Refresh the page data
+      window.location.reload();
+      
+    } catch (error) {
+      console.error("Error updating patient to unified ID:", error);
+      toast({
+        title: "Update Error",
+        description: "Failed to update patient to unified ID. Check console for errors.",
+        variant: "destructive"
+      });
+    }
+  }
+
+  // Sync all medical records for all patients
+  const handleSyncAllMedicalRecords = async () => {
+    try {
+      console.log('=== STARTING MEDICAL RECORDS SYNC FOR ALL PATIENTS ===');
+      
+      // Get all patients
+      const patientsSnapshot = await getDocs(collection(db, 'patients'));
+      const medicalHistorySnapshot = await getDocs(collection(db, 'medical_history'));
+      const medicationsSnapshot = await getDocs(collection(db, 'medications'));
+      
+      const patients = patientsSnapshot.docs.map(doc => ({
+        documentId: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      let updatedMedHistoryCount = 0;
+      let updatedMedicationsCount = 0;
+      
+      // Check each patient's medical records
+      for (const patient of patients) {
+        const patientId = patient.documentId;
+        console.log(`🔍 Checking medical records for patient ${patientId}...`);
+        
+        // Update medical history records that don't match the patient's current ID
+        for (const medHistoryDoc of medicalHistorySnapshot.docs) {
+          const medHistoryData = medHistoryDoc.data();
+          
+          // Check if this medical history belongs to this patient but has wrong patient_id
+          if (medHistoryData.patient_id !== patientId && 
+              (medHistoryData.patient_email === patient.email ||
+               (medHistoryData.patient_first_name === patient.first_name && 
+                medHistoryData.patient_last_name === patient.last_name))) {
+            
+            console.log(`📋 Updating medical history ${medHistoryDoc.id} from patient_id ${medHistoryData.patient_id} to ${patientId}`);
+            
+            await updateDoc(doc(db, 'medical_history', medHistoryDoc.id), {
+              patient_id: patientId,
+              updated_at: serverTimestamp()
+            });
+            
+            updatedMedHistoryCount++;
+          }
+        }
+        
+        // Update medication records that don't match the patient's current ID
+        for (const medicationDoc of medicationsSnapshot.docs) {
+          const medicationData = medicationDoc.data();
+          
+          // Check if this medication belongs to this patient but has wrong patient_id
+          if (medicationData.patient_id !== patientId && 
+              (medicationData.patient_email === patient.email ||
+               (medicationData.patient_first_name === patient.first_name && 
+                medicationData.patient_last_name === patient.last_name))) {
+            
+            console.log(`💊 Updating medication ${medicationDoc.id} from patient_id ${medicationData.patient_id} to ${patientId}`);
+            
+            await updateDoc(doc(db, 'medications', medicationDoc.id), {
+              patient_id: patientId,
+              updated_at: new Date().toISOString()
+            });
+            
+            updatedMedicationsCount++;
+          }
+        }
+      }
+      
+      console.log(`=== SYNC COMPLETE ===`);
+      console.log(`📊 Results:
+        - Medical history records updated: ${updatedMedHistoryCount}
+        - Medication records updated: ${updatedMedicationsCount}`);
+      
+      toast({
+        title: "Sync Complete",
+        description: `Updated ${updatedMedHistoryCount} medical history and ${updatedMedicationsCount} medication records.`,
+      });
+      
+    } catch (error) {
+      console.error("Error syncing medical records:", error);
+      toast({
+        title: "Sync Error",
+        description: "Failed to sync medical records. Check console for errors.",
+        variant: "destructive"
+      });
+    }
+  }
+
+  // Sync patient with Firebase Auth UID
+  const handleSyncPatientWithAuth = async () => {
+    try {
+      const currentPatientId = prompt('Enter the current patient document ID:');
+      const firebaseAuthUid = prompt('Enter the Firebase Auth UID:');
+      
+      if (!currentPatientId || !firebaseAuthUid) {
+        toast({
+          title: "Invalid Input",
+          description: "Both current patient ID and Firebase Auth UID are required.",
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      console.log('=== STARTING PATIENT FIREBASE AUTH SYNC ===');
+      console.log(`Current Patient ID: ${currentPatientId}`);
+      console.log(`Firebase Auth UID: ${firebaseAuthUid}`);
+      
+      // Import the sync function
+      const { syncPatientWithFirebaseAuth } = await import('@/services/firebase/patients');
+      
+      // Perform the sync
+      await syncPatientWithFirebaseAuth(currentPatientId, firebaseAuthUid);
+      
+      toast({
+        title: "Sync Complete",
+        description: `Successfully synced patient ${currentPatientId} with Firebase Auth UID ${firebaseAuthUid}`,
+      });
+      
+      // Refresh the page data
+      window.location.reload();
+      
+    } catch (error) {
+      console.error("Error syncing patient with Firebase Auth:", error);
+      toast({
+        title: "Sync Error",
+        description: "Failed to sync patient with Firebase Auth. Check console for errors.",
+        variant: "destructive"
+      });
+    }
+  }
+
+  // Detect and fix patient-medical history sync issues
+  const handleDetectAndFixSyncIssues = async () => {
+    try {
+      console.log('=== DETECTING PATIENT-MEDICAL HISTORY SYNC ISSUES ===');
+      
+      // Get all data
+      const patientsSnapshot = await getDocs(collection(db, 'patients'));
+      const usersSnapshot = await getDocs(collection(db, 'users'));
+      const medicalHistorySnapshot = await getDocs(collection(db, 'medical_history'));
+      const medicationsSnapshot = await getDocs(collection(db, 'medications'));
+      
+      const patients = patientsSnapshot.docs.map(doc => ({
+        documentId: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      const users = usersSnapshot.docs.map(doc => ({
+        documentId: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      const medicalHistories = medicalHistorySnapshot.docs.map(doc => ({
+        documentId: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      const medications = medicationsSnapshot.docs.map(doc => ({
+        documentId: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      console.log(`📊 Data Summary:
+        - Patients: ${patients.length}
+        - Users: ${users.length}
+        - Medical Histories: ${medicalHistories.length}
+        - Medications: ${medications.length}`);
+      
+      let issuesFound = [];
+      let autoFixedCount = 0;
+      
+      // Check each patient for sync issues
+      for (const patient of patients) {
+        const patientId = patient.documentId;
+        const userId = patient.user_id;
+        
+        // Find corresponding user
+        const correspondingUser = users.find(u => u.documentId === patientId || u.documentId === userId);
+        
+        // Check if patient document ID matches user document ID
+        if (!correspondingUser || correspondingUser.documentId !== patientId) {
+          issuesFound.push({
+            type: 'patient_user_mismatch',
+            patientId: patientId,
+            userId: userId,
+            patientName: `${patient.first_name} ${patient.last_name}`,
+            issue: `Patient document ID ${patientId} doesn't match user document ID`
+          });
+        }
+        
+        // Check medical history records
+        const patientMedicalHistories = medicalHistories.filter(mh => 
+          mh.patient_id === patientId || 
+          mh.patient_id === userId ||
+          (mh.patient_email && mh.patient_email === patient.email)
+        );
+        
+        for (const medHistory of patientMedicalHistories) {
+          if (medHistory.patient_id !== patientId) {
+            issuesFound.push({
+              type: 'medical_history_mismatch',
+              patientId: patientId,
+              medicalHistoryId: medHistory.documentId,
+              wrongPatientId: medHistory.patient_id,
+              correctPatientId: patientId,
+              patientName: `${patient.first_name} ${patient.last_name}`,
+              canAutoFix: true
+            });
+          }
+        }
+        
+        // Check medication records
+        const patientMedications = medications.filter(med => 
+          med.patient_id === patientId || 
+          med.patient_id === userId ||
+          (med.patient_email && med.patient_email === patient.email)
+        );
+        
+        for (const medication of patientMedications) {
+          if (medication.patient_id !== patientId) {
+            issuesFound.push({
+              type: 'medication_mismatch',
+              patientId: patientId,
+              medicationId: medication.documentId,
+              wrongPatientId: medication.patient_id,
+              correctPatientId: patientId,
+              patientName: `${patient.first_name} ${patient.last_name}`,
+              canAutoFix: true
+            });
+          }
+        }
+      }
+      
+      console.log(`🔍 Found ${issuesFound.length} sync issues:`, issuesFound);
+      
+      if (issuesFound.length === 0) {
+        toast({
+          title: "No Issues Found",
+          description: "All patient records are properly synchronized.",
+        });
+        return;
+      }
+      
+      // Auto-fix the issues that can be fixed
+      const autoFixableIssues = issuesFound.filter(issue => issue.canAutoFix);
+      
+      if (autoFixableIssues.length > 0) {
+        const confirmFix = confirm(`Found ${issuesFound.length} sync issues. ${autoFixableIssues.length} can be automatically fixed. Proceed with auto-fix?`);
+        
+        if (confirmFix) {
+          for (const issue of autoFixableIssues) {
+            try {
+              if (issue.type === 'medical_history_mismatch') {
+                await updateDoc(doc(db, 'medical_history', issue.medicalHistoryId), {
+                  patient_id: issue.correctPatientId,
+                  updated_at: serverTimestamp()
+                });
+                console.log(`✅ Fixed medical history ${issue.medicalHistoryId}`);
+                autoFixedCount++;
+              } else if (issue.type === 'medication_mismatch') {
+                await updateDoc(doc(db, 'medications', issue.medicationId), {
+                  patient_id: issue.correctPatientId,
+                  updated_at: new Date().toISOString()
+                });
+                console.log(`✅ Fixed medication ${issue.medicationId}`);
+                autoFixedCount++;
+              }
+            } catch (fixError) {
+              console.error(`Error fixing issue:`, issue, fixError);
+            }
+          }
+        }
+      }
+      
+      console.log(`=== SYNC ISSUE DETECTION COMPLETE ===`);
+      console.log(`📊 Results:
+        - Issues found: ${issuesFound.length}
+        - Auto-fixed: ${autoFixedCount}
+        - Manual intervention needed: ${issuesFound.length - autoFixedCount}`);
+      
+      // Display results to user
+      let message = `Found ${issuesFound.length} sync issues.`;
+      if (autoFixedCount > 0) {
+        message += ` Auto-fixed ${autoFixedCount} issues.`;
+      }
+      if (issuesFound.length - autoFixedCount > 0) {
+        message += ` ${issuesFound.length - autoFixedCount} issues require manual intervention.`;
+      }
+      
+      toast({
+        title: "Sync Issue Detection Complete",
+        description: message,
+      });
+      
+      // Refresh the page if any fixes were made
+      if (autoFixedCount > 0) {
+        setTimeout(() => window.location.reload(), 2000);
+      }
+      
+    } catch (error) {
+      console.error("Error detecting sync issues:", error);
+      toast({
+        title: "Detection Error",
+        description: "Failed to detect sync issues. Check console for errors.",
+        variant: "destructive"
+      });
+    }
+  }
+
+  // Auto-sync patient with Firebase Auth UID by email
+  const handleAutoSyncPatientWithAuthUID = async () => {
+    try {
+      const patientEmail = prompt('Enter the patient email address:');
+      const firebaseAuthUID = prompt('Enter the Firebase Auth UID:');
+      
+      if (!patientEmail || !firebaseAuthUID) {
+        toast({
+          title: "Invalid Input",
+          description: "Both patient email and Firebase Auth UID are required.",
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      console.log('=== STARTING AUTO-SYNC PATIENT WITH AUTH UID ===');
+      console.log(`Patient Email: ${patientEmail}`);
+      console.log(`Firebase Auth UID: ${firebaseAuthUID}`);
+      
+      // Import the auto-sync function
+      const { autoSyncPatientWithAuthUID } = await import('@/services/firebase/patients');
+      
+      // Perform the auto-sync
+      await autoSyncPatientWithAuthUID(patientEmail, firebaseAuthUID);
+      
+      toast({
+        title: "Auto-Sync Complete",
+        description: `Successfully synced patient ${patientEmail} with Firebase Auth UID ${firebaseAuthUID}`,
+      });
+      
+      // Refresh the page data
+      window.location.reload();
+      
+    } catch (error) {
+      console.error("Error auto-syncing patient with Firebase Auth UID:", error);
+      toast({
+        title: "Auto-Sync Error",
+        description: "Failed to auto-sync patient. Check console for errors.",
+        variant: "destructive"
+      });
+    }
+  }
+
+  // Verify patient entity synchronization
+  const handleVerifyPatientEntitySync = async () => {
+    try {
+      const firebaseAuthUID = prompt('Enter the Firebase Auth UID to verify:');
+      
+      if (!firebaseAuthUID) {
+        toast({
+          title: "Invalid Input",
+          description: "Firebase Auth UID is required.",
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      console.log('=== VERIFYING PATIENT ENTITY SYNC ===');
+      console.log(`Firebase Auth UID: ${firebaseAuthUID}`);
+      
+      // Import the verification function
+      const { verifyPatientEntitySync } = await import('@/services/firebase/patients');
+      
+      // Perform the verification
+      const results = await verifyPatientEntitySync(firebaseAuthUID);
+      
+      const status = results.synced ? "SYNCED ✅" : "NOT SYNCED ❌";
+      
+      toast({
+        title: `Entity Sync Status: ${status}`,
+        description: `User: ${results.details.userEntityExists ? '✅' : '❌'} | Patient: ${results.details.patientEntityExists ? '✅' : '❌'} | Medical Records: ${results.details.medicalHistoryRecords}`,
+      });
+      
+      console.log('=== VERIFICATION COMPLETE ===');
+      console.log('Check console for detailed results');
+      
+    } catch (error) {
+      console.error("Error verifying patient entity sync:", error);
+      toast({
+        title: "Verification Error",
+        description: "Failed to verify entity sync. Check console for errors.",
+        variant: "destructive"
+      });
+    }
+  }
+
   // --- END OF ALL HANDLER/HELPER FUNCTIONS ---
 
   // MAIN RETURN for Account component (must be at top level of Account function)
@@ -594,61 +1261,9 @@ const Account = () => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Button 
-            variant="outline" 
-            onClick={handleCreateFirebaseAuthForAll}
-            disabled={creatingFirebaseAuth}
-            className="gap-2 h-12 text-base"
-          >
-            {creatingFirebaseAuth ? (
-              <>
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span className="text-base">Creating Auth Users...</span>
-              </>
-            ) : (
-              <>
-                <Key className="h-5 w-5" />
-                <span className="text-base">Create Firebase Auth for All Active</span>
-              </>
-            )}
-          </Button>
           <Button onClick={() => setIsCreateDialogOpen(true)} className="gap-2 h-12 text-base">
             <UserPlus className="h-5 w-5" />
             <span className="text-base">Create Account</span>
-          </Button>
-          {/* Temporary Migration Button - Remove after running once */}
-          <Button 
-            onClick={async () => {
-              const result = await migrateGuardianToPatient();
-              if (result.success) {
-                toast({
-                  title: "Migration Successful",
-                  description: `Updated ${result.updatedCount} accounts from 'guardian' to 'patient' role.`,
-                });
-                // Refresh the accounts list
-                window.location.reload();
-              } else {
-                toast({
-                  title: "Migration Failed",
-                  description: "Please check the console for errors.",
-                  variant: "destructive"
-                });
-              }
-            }}
-            variant="outline" 
-            className="gap-2 h-12 text-base"
-          >
-            <Settings className="h-5 w-5" />
-            <span className="text-base">Migrate Guardian→Patient</span>
-          </Button>
-          {/* Temporary Delete User Button - Remove after running once */}
-          <Button 
-            onClick={handleDeleteSpecificUser}
-            variant="destructive" 
-            className="gap-2 h-12 text-base"
-          >
-            <Trash2 className="h-5 w-5" />
-            <span className="text-base">Delete User bMnz...</span>
           </Button>
         </div>
       </div>
@@ -754,94 +1369,70 @@ const Account = () => {
             </DialogDescription>
           </DialogHeader>
           
-          <div className="space-y-6 mt-4">
-            {/* Basic Information */}
-            <div className="space-y-4">
-              <h3 className="text-xl font-semibold">Basic Information</h3>
+          <div className="space-y-8">
+            <h2 className="text-2xl font-bold">Create New Account</h2>
+            <p className="text-base text-muted-foreground">
+              Create a new account for a caregiver or patient. An email with login credentials will be sent automatically.
+            </p>
 
+            <div className="space-y-6">
+              <h3 className="text-xl font-semibold">Basic Information</h3>
               <div className="space-y-2">
                 <Label htmlFor="role" className="text-base font-medium">Account Role *</Label>
-                <Select 
-                  value={formData.role} 
-                  onValueChange={(value) => handleInputChange("role", value)}
-                >
+                <Select value={formData.role} onValueChange={value => handleInputChange('role', value)}>
                   <SelectTrigger className="h-12 text-base">
                     <SelectValue placeholder="Select account role" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="caregiver" className="text-base">
-                      <div className="flex items-center gap-2">
-                        <Heart className="h-5 w-5 text-blue-500" />
-                        <span className="text-base">Caregiver</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="patient" className="text-base">
-                      <div className="flex items-center gap-2">
-                        <Shield className="h-5 w-5 text-green-500" />
-                        <span className="text-base">Patient</span>
-                      </div>
-                    </SelectItem>
+                    <SelectItem value="caregiver" className="text-base">Caregiver</SelectItem>
+                    <SelectItem value="patient" className="text-base">Patient</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-
               <div className="space-y-2">
                 <Label htmlFor="email" className="text-base font-medium">Contact Email Address *</Label>
                 <Select 
                   value={formData.email} 
-                  onValueChange={(value) => handleInputChange("email", value)}
+                  onValueChange={value => handleInputChange('email', value)}
                 >
                   <SelectTrigger className="h-12 text-base">
                     <SelectValue placeholder={`Select ${formData.role === 'caregiver' ? 'caregiver' : 'patient'} email`} />
                   </SelectTrigger>
                   <SelectContent>
-                    {formData.role === 'caregiver' && (() => {
-                      console.log('🔍 DROPDOWN DEBUG - Total caregivers:', caregivers.length);
-                      console.log('🔍 DROPDOWN DEBUG - Caregivers data:', caregivers);
-                      const filteredCaregivers = caregivers
-                        .filter(caregiver => {
-                          console.log('🔍 DROPDOWN DEBUG - Checking caregiver:', {
-                            name: `${caregiver.first_name} ${caregiver.last_name}`,
-                            email: caregiver.email,
-                            hasEmail: !!caregiver.email,
-                            emailTrimmed: caregiver.email?.trim(),
-                            allFields: Object.keys(caregiver)
-                          });
-                          return caregiver.email && caregiver.email.trim() !== '';
-                        })
-                        .filter((caregiver, index, arr) => 
-                          arr.findIndex(c => c.email === caregiver.email) === index);
-                      console.log('🔍 DROPDOWN DEBUG - Filtered caregivers:', filteredCaregivers);
-                      return filteredCaregivers.map((caregiver) => (
+                    {formData.role === 'caregiver' && caregivers
+                      .filter(caregiver => caregiver.email && caregiver.email.trim() !== '')
+                      .filter((caregiver, index, arr) => arr.findIndex(c => c.email === caregiver.email) === index)
+                      .map(caregiver => (
                         <SelectItem key={`caregiver-${caregiver.caregiver_id}`} value={caregiver.email} className="text-base">
-                          {caregiver.email} - {caregiver.first_name} {caregiver.last_name}
+                          {caregiver.email} - {caregiver.first_name} {caregiver.last_name} (Caregiver)
                         </SelectItem>
-                      ));
-                    })()}
-                    {formData.role === 'patient' && (() => {
-                      const filteredPatients = patients
-                        .filter(patient => {
-                          console.log('Patient:', patient.first_name, patient.last_name, 'Email:', patient.email);
-                          return patient.email && patient.email.trim() !== '';
-                        })
-                        .filter((patient, index, arr) => 
-                          arr.findIndex(p => p.email === patient.email) === index);
-                      console.log('Filtered patients for dropdown:', filteredPatients);
-                      return filteredPatients.map((patient) => (
+                      ))}
+                    {formData.role === 'patient' && patients
+                      .filter(patient => patient.email && patient.email.trim() !== '')
+                      .filter((patient, index, arr) => arr.findIndex(p => p.email === patient.email) === index)
+                      .map(patient => (
                         <SelectItem key={`patient-${patient.patient_id}`} value={patient.email} className="text-base">
                           {patient.email} - {patient.first_name} {patient.last_name} (Patient)
                         </SelectItem>
-                      ));
-                    })()}
+                      ))}
                   </SelectContent>
                 </Select>
-                <p className="text-base text-muted-foreground">
-                  This email will receive the auto-generated login credentials
-                </p>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="notes" className="text-base font-medium">Welcome Message (Optional)</Label>
+                <Textarea
+                  id="notes"
+                  value={formData.notes}
+                  onChange={e => handleInputChange('notes', e.target.value)}
+                  className="h-20 text-base"
+                  placeholder="Enter a welcome message that will be included in the account creation email..."
+                />
+              </div>
+              <p className="text-base text-muted-foreground">
+                The email will include a verification link that the user must click to activate their account and confirm it's ready for login.
+              </p>
             </div>
 
-            {/* Generated Credentials Preview */}
             {formData.generated_email && formData.generated_password && (
               <div className="space-y-4">
                 <h3 className="text-xl font-semibold">Generated Login Credentials Preview</h3>
@@ -868,21 +1459,6 @@ const Account = () => {
                 </div>
               </div>
             )}
-
-            <div className="space-y-2">
-              <Label htmlFor="notes" className="text-base font-medium">Welcome Message (Optional)</Label>
-              <Textarea
-                id="notes"
-                value={formData.notes}
-                onChange={(e) => handleInputChange("notes", e.target.value)}
-                placeholder="Enter a welcome message that will be included in the account creation email..."
-                rows={3}
-                className="text-base"
-              />
-              <p className="text-base text-muted-foreground">
-                The email will include a verification link that the user must click to activate their account and confirm it's ready for login.
-              </p>
-            </div>
           </div>
 
           <div className="flex justify-end gap-3 mt-8 pt-6 border-t">
@@ -1049,22 +1625,51 @@ const AccountList = ({
   }
 
   return (
-    <div className="space-y-4">
-      {accounts.map((account) => (
-        <Card key={account.id} className="hover:shadow-md transition-shadow">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  {getRoleIcon(account.role)}
-                </div>
-                <div className="space-y-1">
-                  <h3 className="font-semibold text-base">{getAccountDisplayName(account)}</h3>
-                  <p className="text-sm text-muted-foreground">{account.email}</p>
-                  <div className="flex items-center gap-3 mt-2">
+    <Card>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[50px]">Role</TableHead>
+                <TableHead className="min-w-[150px]">Name</TableHead>
+                <TableHead className="min-w-[180px]">Contact Email</TableHead>
+                <TableHead className="min-w-[180px]">Login Email</TableHead>
+                <TableHead className="min-w-[100px]">Status</TableHead>
+                <TableHead className="min-w-[120px]">Verification</TableHead>
+                <TableHead className="min-w-[100px]">Created</TableHead>
+                <TableHead className="min-w-[100px]">Last Login</TableHead>
+                <TableHead className="text-right min-w-[120px]">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {accounts.map((account) => (
+                <TableRow key={account.id} className="hover:bg-muted/50">
+                  <TableCell>
+                    <div className="p-2 bg-gray-50 rounded-lg w-fit">
+                      {getRoleIcon(account.role)}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="space-y-1">
+                      <div className="font-semibold">{getAccountDisplayName(account)}</div>
+                      <div className="text-sm text-muted-foreground capitalize">{account.role}</div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-sm">{account.email}</div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="font-mono text-sm text-blue-600">
+                      {account.generated_email || '-'}
+                    </div>
+                  </TableCell>
+                  <TableCell>
                     <Badge className={getStatusColor(account.status)} variant="secondary">
                       {account.status}
                     </Badge>
+                  </TableCell>
+                  <TableCell>
                     <Badge 
                       className={account.verified 
                         ? 'bg-green-100 text-green-800 border-green-200' 
@@ -1084,59 +1689,75 @@ const AccountList = ({
                         </>
                       )}
                     </Badge>
-                    <span className="text-xs text-muted-foreground font-medium">
-                      {account.name || (account.role === 'caregiver' ? 'Caregiver Account' : 'Guardian Account')}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onViewAccount(account)}
-                  className="h-9 px-3"
-                >
-                  <Eye className="h-4 w-4" />
-                </Button>
-                
-                {/* Firebase Auth Creation Button - only show for active and verified accounts */}
-                {account.status === 'active' && account.verified && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => onCreateFirebaseAuth(account.id)}
-                    disabled={creatingAuthForAccount === account.id}
-                    className="h-9 px-3 text-blue-600 hover:text-blue-700"
-                    title="Create Firebase Auth User"
-                  >
-                    {creatingAuthForAccount === account.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Key className="h-4 w-4" />
-                    )}
-                  </Button>
-                )}
-                
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onSuspendAccount(account.id)}
-                  className={`h-9 px-3 ${account.status === 'suspended' ? 'text-green-600 hover:text-green-700' : 'text-red-600 hover:text-red-700'}`}
-                >
-                  {account.status === 'suspended' ? (
-                    <CheckCircle className="h-4 w-4" />
-                  ) : (
-                    <AlertCircle className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-sm">
+                      {account.createdAt?.seconds 
+                        ? new Date(account.createdAt.seconds * 1000).toLocaleDateString() 
+                        : 'Unknown'
+                      }
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-sm">
+                      {account.lastLogin?.seconds 
+                        ? new Date(account.lastLogin.seconds * 1000).toLocaleDateString() 
+                        : 'Never'
+                      }
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onViewAccount(account)}
+                        className="h-9 px-3"
+                        title="View Details"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      
+                      {/* Firebase Auth Creation Button - only show for active and verified accounts */}
+                      {account.status === 'active' && account.verified && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onCreateFirebaseAuth(account.id)}
+                          disabled={creatingAuthForAccount === account.id}
+                          className="h-9 px-3 text-blue-600 hover:text-blue-700"
+                          title="Create Firebase Auth User"
+                        >
+                          {creatingAuthForAccount === account.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Key className="h-4 w-4" />
+                          )}
+                        </Button>
+                      )}
+                      
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onSuspendAccount(account.id)}
+                        className={`h-9 px-3 ${account.status === 'suspended' ? 'text-green-600 hover:text-green-700' : 'text-red-600 hover:text-red-700'}`}
+                        title={account.status === 'suspended' ? 'Activate Account' : 'Suspend Account'}
+                      >
+                        {account.status === 'suspended' ? (
+                          <CheckCircle className="h-4 w-4" />
+                        ) : (
+                          <AlertCircle className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 export default Account

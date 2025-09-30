@@ -5,12 +5,14 @@ import { Timestamp } from 'firebase/firestore';
 export interface User {
   user_id: string; // Firebase Auth UID or Firestore document ID
   first_name: string;
+  middle_name?: string;
   last_name: string;
   email: string;
   password?: string; // Not stored in Firestore for security
   role: 'Patient' | 'Caregiver' | 'Admin' | 'Guardian';
   contact_number: string;
   address: string;
+  birthday?: string; // Birthday field for users
   created_at: Timestamp;
   updated_at: Timestamp;
   is_active: boolean;
@@ -18,7 +20,9 @@ export interface User {
 
 // 2. Patient - Extends User (with temporary compatibility fields)
 export interface Patient {
+  id: string; // Document ID
   patient_id: string; // Same as user_id (FK → User.user_id)
+  user_id?: string; // Reference to User.user_id for linking
   
   // Core patient fields
   birthdate: string;
@@ -27,6 +31,7 @@ export interface Patient {
   
   // Temporary compatibility fields (should be in User entity)
   first_name?: string;
+  middle_name?: string;
   last_name?: string;
   contact_number?: number;
   address?: string;
@@ -51,6 +56,7 @@ export interface Patient {
 // 3. Caregiver - Extends User (with temporary compatibility fields)
 export interface Caregiver {
   caregiver_id: string; // Same as user_id (FK → User.user_id)
+  user_id?: string; // Reference to User.user_id
   shift_type: 'Day' | 'Night';
   
   // Temporary compatibility fields (should be in User entity)
@@ -94,8 +100,10 @@ export interface Caregiver {
 
 // 4. Medication
 export interface Medication {
+  id: string; // Document ID
   medication_id: string;
   patient_id: string; // FK → Patient.patient_id
+  name: string; // Medication name field
   medication_name: string;
   dosage: string;
   frequency: string;
@@ -116,7 +124,20 @@ export interface MedicalHistory {
   description?: string;
   date_diagnosed: string;
   treatment?: string;
+  severity?: string;
+  status?: string;
+  medications?: string;
+  allergies?: string;
   attachments?: string[]; // PDF/image paths
+  notes?: string; // Added notes field
+  
+  // New consolidated medical history fields
+  current_medical_conditions?: string[]; // Array of current medical conditions
+  past_medical_history?: string[]; // Array of past medical conditions
+  current_medications?: string[]; // Array of current medications
+  known_allergies?: string[]; // Array of known allergies
+  serialized_conditions?: string; // Backward compatibility serialized format
+  
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -134,9 +155,47 @@ export interface CaregiverShift {
   updated_at: Timestamp;
 }
 
-// 7. Reminder_Log
-export interface ReminderLog {
+// 7. Reminder
+export interface Reminder {
+  id: string; // Document ID
   reminder_id: string;
+  caregiverRef: string; // Reference to caregiver
+  userId: string; // User ID
+  title: string;
+  description: string;
+  type: 'Task' | 'Medication' | 'Appointment' | 'Custom';
+  repeat: 'Once' | 'Daily' | 'Weekly' | 'Monthly' | 'Custom';
+  is_active: boolean;
+  notification_times: Array<{
+    hour: number;
+    minute: number;
+  }>;
+  createdTime: Timestamp;
+  updatedTime?: Timestamp;
+  
+  // Legacy fields for backward compatibility
+  medication_id?: string;
+  patient_id?: string;
+  reminder_type?: 'Medication' | 'Appointment' | 'Custom';
+  scheduled_time?: Timestamp;
+  frequency?: 'Once' | 'Daily' | 'Weekly' | 'Monthly' | 'Custom';
+  created_at?: Timestamp;
+  updated_at?: Timestamp;
+}
+
+// Notification time structure (simplified)
+export interface NotificationTime {
+  hour: number;
+  minute: number;
+  repeat?: string; // Made optional since the actual structure doesn't have it
+}
+
+// 8. Reminder_Log
+export interface ReminderLog {
+  id: string; // Document ID
+  reminder_id: string;
+  userId?: string; // User ID field
+  caregiverRef?: string; // Caregiver reference field
   medication_id: string; // FK → Medication.medication_id
   patient_id: string; // FK → Patient.patient_id
   scheduled_time: Timestamp;

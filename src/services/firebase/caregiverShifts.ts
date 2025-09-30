@@ -273,6 +273,58 @@ export const getCurrentShifts = async (): Promise<CaregiverShift[]> => {
   }
 };
 
+// Get today's shifts for a specific caregiver
+export const getCaregiverTodayShifts = async (caregiverId: string): Promise<CaregiverShift[]> => {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // Get YYYY-MM-DD format
+    const q = query(
+      collection(db, COLLECTIONS.CAREGIVER_SHIFTS),
+      and(
+        where('caregiver_id', '==', caregiverId),
+        where('shift_date', '==', today)
+      ),
+      orderBy('start_time', 'asc')
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({
+      shift_id: doc.id,
+      ...doc.data()
+    })) as CaregiverShift[];
+  } catch (error) {
+    console.error('Error fetching caregiver today shifts:', error);
+    
+    // Fallback to manual filtering if index is not ready
+    if (error instanceof Error && error.message.includes('index')) {
+      console.warn('Index not ready, using fallback query for caregiver today shifts...');
+      const today = new Date().toISOString().split('T')[0]; // Re-declare for fallback scope
+      const fallbackQ = query(
+        collection(db, COLLECTIONS.CAREGIVER_SHIFTS),
+        where('caregiver_id', '==', caregiverId)
+      );
+      
+      const querySnapshot = await getDocs(fallbackQ);
+      const shifts = querySnapshot.docs.map(doc => ({
+        shift_id: doc.id,
+        ...doc.data()
+      })) as CaregiverShift[];
+      
+      return shifts
+        .filter(shift => {
+          const shiftDateStr = timestampToDateString(shift.shift_date);
+          return shiftDateStr === today;
+        })
+        .sort((a, b) => {
+          // Sort by start_time (assuming it's a string)
+          const timeA = typeof a.start_time === 'string' ? a.start_time : a.start_time.toString();
+          const timeB = typeof b.start_time === 'string' ? b.start_time : b.start_time.toString();
+          return timeA.localeCompare(timeB);
+        });
+    }
+    
+    throw error;
+  }
+};
+
 // Test if the composite index is ready
 export const testCaregiverShiftIndex = async (): Promise<boolean> => {
   try {
@@ -299,68 +351,3 @@ export const testCaregiverShiftIndex = async (): Promise<boolean> => {
   }
 };
 
-// Get current shifts for a specific caregiver (today's shifts)
-export const getCaregiverTodayShifts = async (caregiverId: string): Promise<CaregiverShift[]> => {
-  const today = new Date().toISOString().split('T')[0]; // Get YYYY-MM-DD format
-  const todayTimestamp = Timestamp.fromDate(new Date(today));
-  
-  try {
-    // First try: Use simple query with AND conditions but no orderBy
-    const q = query(
-      collection(db, COLLECTIONS.CAREGIVER_SHIFTS),
-      and(
-        where('caregiver_id', '==', caregiverId),
-        where('shift_date', '==', todayTimestamp)
-      )
-    );
-    
-    const querySnapshot = await getDocs(q);
-    const shifts = querySnapshot.docs.map(doc => ({
-      shift_id: doc.id,
-      ...doc.data()
-    })) as CaregiverShift[];
-    
-    // Sort manually by start_time
-    const sortedShifts = shifts.sort((a, b) => {
-      const timeA = a.start_time.toDate().getTime();
-      const timeB = b.start_time.toDate().getTime();
-      return timeA - timeB;
-    });
-    
-    console.log(`Found ${sortedShifts.length} shifts for caregiver ${caregiverId} on ${today} (using composite query without orderBy)`);
-    return sortedShifts;
-    
-  } catch (error) {
-    console.warn('Composite query failed, using fallback single-field query:', error);
-    
-    // Fallback: Query by caregiver_id only, then filter by date in memory
-    try {
-      const fallbackQ = query(
-        collection(db, COLLECTIONS.CAREGIVER_SHIFTS),
-        where('caregiver_id', '==', caregiverId)
-      );
-      
-      const fallbackSnapshot = await getDocs(fallbackQ);
-      const allShifts = fallbackSnapshot.docs.map(doc => ({
-        shift_id: doc.id,
-        ...doc.data()
-      })) as CaregiverShift[];
-      
-      // Filter by today's date and sort
-      const todayShifts = allShifts
-        .filter(shift => timestampToDateString(shift.shift_date) === today)
-        .sort((a, b) => {
-          const timeA = a.start_time.toDate().getTime();
-          const timeB = b.start_time.toDate().getTime();
-          return timeA - timeB;
-        });
-        
-      console.log(`Found ${todayShifts.length} shifts for caregiver ${caregiverId} on ${today} (using fallback query)`);
-      return todayShifts;
-      
-    } catch (fallbackError) {
-      console.error('Error in fallback query:', fallbackError);
-      return [];
-    }
-  }
-};
