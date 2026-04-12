@@ -1,0 +1,51 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "caregiver_shifts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "caregiver_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "shift_date", 
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "start_time",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "caregiver_shifts",
+      "queryScope": "COLLECTION", 
+      "fields": [
+        {
+          "fieldPath": "caregiver_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "shift_date",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "caregiver_shifts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "shift_date",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "start_time", 
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -1,0 +1,137 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Violet-inspired design system */
+    --background: 260 15% 98%;
+    --foreground: 275 25% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 275 25% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 275 25% 15%;
+
+    /* Beautiful violet primary */
+    --primary: 270 85% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Soft lavender secondary */
+    --secondary: 280 30% 88%;
+    --secondary-foreground: 275 25% 15%;
+
+    --muted: 260 15% 94%;
+    --muted-foreground: 275 15% 45%;
+
+    /* Rich purple accent */
+    --accent: 285 85% 65%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Medical alert red (keeping for safety) */
+    --destructive: 5 85% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 260 20% 88%;
+    --input: 260 20% 94%;
+    --ring: 270 85% 60%;
+
+    /* Healthcare-specific colors with violet theme */
+    --medical-success: 140 70% 50%;
+    --medical-warning: 45 90% 60%;
+    --medical-info: 270 85% 60%;
+    --medical-critical: 5 85% 55%;
+
+    /* Violet gradients for visual appeal */
+    --gradient-primary: linear-gradient(135deg, hsl(270 85% 60%), hsl(280 70% 65%));
+    --gradient-secondary: linear-gradient(135deg, hsl(280 30% 88%), hsl(290 25% 82%));
+    --gradient-accent: linear-gradient(135deg, hsl(285 85% 65%), hsl(295 80% 60%));
+
+    /* Shadows for depth */
+    --shadow-sm: 0 2px 4px hsl(275 25% 15% / 0.08);
+    --shadow-md: 0 4px 12px hsl(275 25% 15% / 0.12);
+    --shadow-lg: 0 8px 24px hsl(275 25% 15% / 0.16);
+
+    /* Transitions */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 270 15% 98%;
+    --sidebar-foreground: 275 20% 25%;
+    --sidebar-primary: 270 85% 60%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 280 25% 95%;
+    --sidebar-accent-foreground: 275 20% 25%;
+    --sidebar-border: 260 20% 88%;
+    --sidebar-ring: 270 85% 60%;
+  }
+
+  .dark {
+    --background: 275 45% 8%;
+    --foreground: 280 15% 95%;
+
+    --card: 275 45% 8%;
+    --card-foreground: 280 15% 95%;
+
+    --popover: 275 45% 8%;
+    --popover-foreground: 280 15% 95%;
+
+    --primary: 270 85% 70%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 280 20% 15%;
+    --secondary-foreground: 280 15% 95%;
+
+    --muted: 280 20% 15%;
+    --muted-foreground: 280 15% 65%;
+
+    --accent: 285 60% 25%;
+    --accent-foreground: 280 15% 95%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 280 15% 95%;
+
+    --border: 280 20% 15%;
+    --input: 280 20% 15%;
+    --ring: 270 85% 70%;
+    
+    --sidebar-background: 275 45% 8%;
+    --sidebar-foreground: 280 15% 95%;
+    --sidebar-primary: 270 85% 70%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 280 20% 15%;
+    --sidebar-accent-foreground: 280 15% 95%;
+    --sidebar-border: 280 20% 15%;
+    --sidebar-ring: 270 85% 70%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  .dark html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply min-h-screen bg-background text-foreground antialiased;
+  }
+
+  .dark body {
+    background-image:
+      radial-gradient(circle at top, hsl(270 85% 18% / 0.35), transparent 34%),
+      radial-gradient(circle at bottom right, hsl(285 70% 22% / 0.18), transparent 30%);
+  }
+}

@@ -1,0 +1,38 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow authenticated users to upload license files
+    match /licenses/{filename} {
+      allow read, write: if request.auth != null
+                        && resource.size < 10 * 1024 * 1024; // 10MB max
+    }
+    
+    // Allow authenticated users to upload caregiver-related files
+    match /caregivers/{caregiverId}/{filename} {
+      allow read, write: if request.auth != null
+                        && resource.size < 10 * 1024 * 1024; // 10MB max
+    }
+
+    // Allow authenticated users to upload medical attachment files
+    match /medical-attachments/{patientId}/{medicalHistoryId}/{filename} {
+      allow read, write: if request.auth != null
+                        && request.resource.size < 10 * 1024 * 1024 // 10MB max
+                        && (request.resource.contentType.matches('image/jpeg')
+                            || request.resource.contentType.matches('application/pdf'));
+    }
+    
+    // Allow authenticated users to upload to public folders
+    match /public/{allPaths=**} {
+      allow read: if true; // Public read
+      allow write: if request.auth != null
+                  && resource.size < 10 * 1024 * 1024; // 10MB max
+    }
+    
+    // Default deny all other access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
