@@ -363,6 +363,10 @@ const Schedule = () => {
     const seenShiftIds = new Set<string>();
     
     return shifts.filter(shift => {
+      if (!isShiftForExistingCaregiver(shift)) {
+        return false;
+      }
+
       if (seenShiftIds.has(shift.shift_id)) {
         return false;
       }
@@ -372,12 +376,20 @@ const Schedule = () => {
       const { current, next } = getShiftPeriods(shift.caregiver_id);
       
       // Always show shift if it's part of current period
-      if (current && shiftDate >= current.startDate && shiftDate <= current.endDate) {
+      if (
+        current &&
+        timestampToDate(shift.start_time) <= current.endDate &&
+        timestampToDate(shift.end_time) >= current.startDate
+      ) {
         return true;
       }
       
       // Always show shift if it's part of next period
-      if (next && shiftDate >= next.startDate && shiftDate <= next.endDate) {
+      if (
+        next &&
+        timestampToDate(shift.start_time) <= next.endDate &&
+        timestampToDate(shift.end_time) >= next.startDate
+      ) {
         return true;
       }
       
@@ -788,6 +800,10 @@ const Schedule = () => {
     return caregiver ? `${caregiver.first_name} ${caregiver.last_name}` : 'Unknown';
   };
 
+  const isShiftForExistingCaregiver = (shift: CaregiverShift) => {
+    return caregivers.some(caregiver => caregiver.caregiver_id === shift.caregiver_id);
+  };
+
   const relevantShifts = useMemo(() => getRelevantShifts(), [shifts, caregivers, autoRotationSettings.enabled]);
 
   const groupedShifts = useMemo(() => {
@@ -841,8 +857,8 @@ const Schedule = () => {
   };
 
   const getRelevantShiftsForCalendar = () => {
-    // Use the same filtering logic as table view
-    return relevantShifts;
+    // Show the saved shifts directly in the calendar so overnight edges are not hidden
+    return shifts.filter(isShiftForExistingCaregiver);
   };
 
   const getShiftsForDate = (date: Date) => {
@@ -851,6 +867,58 @@ const Schedule = () => {
       const shiftDate = shift.shift_date.toDate();
       return shiftDate.toDateString() === date.toDateString();
     });
+  };
+
+  const getShiftPeriodMeta = (shift: CaregiverShift) => {
+    const caregiverShifts = shifts
+      .filter(item => item.caregiver_id === shift.caregiver_id)
+      .sort((a, b) => a.shift_date.toDate().getTime() - b.shift_date.toDate().getTime());
+
+    const index = caregiverShifts.findIndex(item => item.shift_id === shift.shift_id);
+    if (index === -1) {
+      return { position: 1, total: 4 };
+    }
+
+    const currentDate = caregiverShifts[index].shift_date.toDate();
+    const currentType = caregiverShifts[index].shift_type;
+
+    const isConsecutive = (firstDate: Date, secondDate: Date) => {
+      const dayDifference = Math.abs((secondDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24));
+      return dayDifference <= 1;
+    };
+
+    let startIndex = index;
+    let cursorDate = currentDate;
+    while (startIndex > 0) {
+      const previousShift = caregiverShifts[startIndex - 1];
+      const previousShiftDate = previousShift.shift_date.toDate();
+
+      if (previousShift.shift_type !== currentType || !isConsecutive(previousShiftDate, cursorDate)) {
+        break;
+      }
+
+      startIndex -= 1;
+      cursorDate = previousShiftDate;
+    }
+
+    let endIndex = index;
+    cursorDate = currentDate;
+    while (endIndex < caregiverShifts.length - 1) {
+      const nextShift = caregiverShifts[endIndex + 1];
+      const candidateDate = nextShift.shift_date.toDate();
+
+      if (nextShift.shift_type !== currentType || !isConsecutive(cursorDate, candidateDate)) {
+        break;
+      }
+
+      endIndex += 1;
+      cursorDate = candidateDate;
+    }
+
+    return {
+      position: index - startIndex + 1,
+      total: 4,
+    };
   };
 
   const getMonthYear = (date: Date) => {
@@ -1195,22 +1263,30 @@ const Schedule = () => {
                           <div className="text-xs text-muted-foreground">No shifts</div>
                         ) : (
                           dayShifts.map((shift) => {
-                            const caregiver = caregivers.find(c => c.caregiver_id === shift.caregiver_id);
+                            const periodMeta = getShiftPeriodMeta(shift);
+                            const isNightShift = shift.shift_type === 'Night';
+                            const shiftCardClass = isNightShift
+                              ? 'rounded-md border border-slate-600 bg-slate-950/90 p-2 text-xs text-slate-50 shadow-sm shadow-slate-950/20'
+                              : 'rounded-md border border-primary/20 bg-primary/10 p-2 text-xs shadow-sm';
+
                             return (
                               <div
                                 key={shift.shift_id}
-                                className="rounded-md border p-2 text-xs bg-muted/40"
+                                className={shiftCardClass}
                               >
                                 <div className="font-medium truncate">
                                   {getCaregiverName(shift.caregiver_id)}
                                 </div>
-                                <div className="text-muted-foreground">
+                                <div className={isNightShift ? 'text-slate-300' : 'text-muted-foreground'}>
                                   {shift.shift_type} • {formatTime(shift.start_time)}-{formatTime(shift.end_time)}
                                 </div>
-                                <div className="mt-1">
+                                <div className="mt-2 flex items-center justify-between gap-2">
                                   <Badge variant={shift.shift_type === 'Day' ? 'default' : 'secondary'}>
                                     {shift.shift_type}
                                   </Badge>
+                                  <span className={isNightShift ? 'text-[10px] text-slate-300' : 'text-[10px] text-muted-foreground'}>
+                                    {periodMeta.position}/{periodMeta.total} day{periodMeta.total !== 1 ? 's' : ''}
+                                  </span>
                                 </div>
                               </div>
                             );
