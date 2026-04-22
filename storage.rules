@@ -3,36 +3,115 @@ rules_version = '2';
 // Firebase Storage Security Rules
 service firebase.storage {
   match /b/{bucket}/o {
-    // Allow authenticated users to upload license files
-    match /licenses/{filename} {
-      allow read, write: if request.auth != null
-                        && resource.size < 10 * 1024 * 1024; // 10MB max
-    }
-    
-    // Allow authenticated users to upload caregiver-related files
-    match /caregivers/{caregiverId}/{filename} {
-      allow read, write: if request.auth != null
-                        && resource.size < 10 * 1024 * 1024; // 10MB max
-    }
-
-    // Allow authenticated users to upload medical attachment files
-    match /medical-attachments/{patientId}/{medicalHistoryId}/{filename} {
-      allow read, write: if request.auth != null
-                        && request.resource.size < 10 * 1024 * 1024 // 10MB max
-                        && (request.resource.contentType.matches('image/jpeg')
-                            || request.resource.contentType.matches('application/pdf'));
-    }
-    
-    // Allow authenticated users to upload to public folders
-    match /public/{allPaths=**} {
-      allow read: if true; // Public read
-      allow write: if request.auth != null
-                  && resource.size < 10 * 1024 * 1024; // 10MB max
-    }
-    
     // Default deny all other access
     match /{allPaths=**} {
       allow read, write: if false;
+    }
+
+    match /chat_images/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /users/{userId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth.uid == userId;
+    }
+
+    match /audio/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /album_art/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /medical_records/{userId}/{fileName} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Medical history attachments - matches the app's upload path
+    match /medical-attachments/{patientId}/{medicalHistoryId}/{filename} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.resource.size < 10 * 1024 * 1024
+                   && (
+                     request.resource.contentType.matches('image/.*')
+                     || request.resource.contentType.matches('application/pdf')
+                     || filename.matches('.*\.(jpg|jpeg|png|webp|pdf)$')
+                   );
+    }
+
+    // Reminder Evidence - Allow photo evidence uploads and reads
+    match /reminder_evidence/photos/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.resource.size < 15 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Reminder Evidence - Allow video evidence uploads and reads
+    match /reminder_evidence/videos/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.resource.size < 100 * 1024 * 1024
+                   && request.resource.contentType.matches('video/.*');
+    }
+
+    // Reminder Evidence - Allow video thumbnail uploads and reads
+    match /reminder_evidence/thumbnails/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Memory Journal - Allow memory image uploads and reads
+    match /memory_images/{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Memory Journal - Allow memory audio uploads and reads
+    match /memory_audio/{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Memory Journal - Allow memory video uploads and reads
+    match /memory_videos/{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Memory Journal - Allow video thumbnail uploads and reads
+    match /video_thumbnails/{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Allow caregiver signup to upload license files before approval/auth exists
+    match /licenses/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Allow authenticated users to upload profile photos
+    match /profile_photos/{filename} {
+      allow read, write: if request.auth != null
+                        && request.resource.size < 5 * 1024 * 1024;
+    }
+
+    // Allow authenticated users to upload caregiver-related files
+    match /caregivers/{caregiverId}/{filename} {
+      allow read, write: if request.auth != null
+                        && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    // Allow authenticated users to upload to public folders
+    match /public/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+                  && request.resource.size < 10 * 1024 * 1024;
     }
   }
 }

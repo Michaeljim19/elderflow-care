@@ -470,6 +470,40 @@ const Schedule = () => {
     return hoursUntilEnd > 0 && hoursUntilEnd <= leadTimeHours;
   };
 
+  const getNextRotationInfo = (caregiverId: string) => {
+    const { current, next } = getShiftPeriods(caregiverId);
+
+    if (next) {
+      return {
+        label: `Next rotation: ${formatDate(next.startDate)} (${next.type})`,
+        variant: 'outline' as const,
+        className: 'border-blue-200 bg-blue-50 text-blue-700',
+      };
+    }
+
+    if (current && isShiftPeriodAboutToEnd(caregiverId)) {
+      return {
+        label: `Rotates soon: ${formatDate(current.endDate)}`,
+        variant: 'destructive' as const,
+        className: '',
+      };
+    }
+
+    if (current) {
+      return {
+        label: `Next rotation pending`,
+        variant: 'secondary' as const,
+        className: '',
+      };
+    }
+
+    return {
+      label: 'No rotation scheduled',
+      variant: 'outline' as const,
+      className: 'border-muted-foreground/30 text-muted-foreground',
+    };
+  };
+
   // Helper function to check if a period is currently active
   const isPeriodActive = (period: any) => {
     const now = new Date();
@@ -585,21 +619,18 @@ const Schedule = () => {
     const { current } = getShiftPeriods(currentCaregiverId);
     if (!current) return null;
 
-    const nextCaregiver = getNextCaregiverForRotation(currentCaregiverId);
-    if (!nextCaregiver) return null;
-
     // Generate 4-day shift period starting after current period ends
     const nextPeriodStart = new Date(current.endDate);
     const nextShiftType = current.type === 'Day' ? 'Night' : 'Day';
     const shiftDuration = 4; // 4 days per period
 
-    const periodKey = `${nextCaregiver.caregiver_id}:${nextPeriodStart.toISOString().split('T')[0]}:${nextShiftType}`;
+    const periodKey = `${currentCaregiverId}:${nextPeriodStart.toISOString().split('T')[0]}:${nextShiftType}`;
     if (generatedPeriodKeysRef.current.has(periodKey)) {
       return null;
     }
 
     const alreadyScheduled = shifts.some(shift => {
-      if (shift.caregiver_id !== nextCaregiver.caregiver_id) {
+      if (shift.caregiver_id !== currentCaregiverId) {
         return false;
       }
 
@@ -632,12 +663,12 @@ const Schedule = () => {
       }
 
       const newShift = {
-        caregiver_id: nextCaregiver.caregiver_id,
+        caregiver_id: currentCaregiverId,
         shift_date: Timestamp.fromDate(shiftDate),
         shift_type: nextShiftType,
         start_time: Timestamp.fromDate(startTime),
         end_time: Timestamp.fromDate(endTime),
-        notes: `Auto-generated ${nextShiftType} shift period (${i + 1}/4) - rotation from ${getCaregiverName(currentCaregiverId)}`,
+        notes: `Auto-generated ${nextShiftType} shift period (${i + 1}/4) - rotation for ${getCaregiverName(currentCaregiverId)}`,
         created_at: Timestamp.now(),
         updated_at: Timestamp.now()
       };
@@ -654,7 +685,7 @@ const Schedule = () => {
       generatedPeriodKeysRef.current.add(periodKey);
       
       return {
-        caregiverId: nextCaregiver.caregiver_id,
+        caregiverId: currentCaregiverId,
         shiftType: nextShiftType,
         startDate: nextPeriodStart,
         endDate: new Date(nextPeriodStart.getTime() + (shiftDuration * 24 * 60 * 60 * 1000)),
@@ -673,30 +704,23 @@ const Schedule = () => {
     autoRotationLockRef.current = true;
 
     try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
       let hasGeneratedNewShifts = false;
 
       // Check each caregiver's current shift period
       for (const caregiver of caregivers) {
         const { current, next } = getShiftPeriods(caregiver.caregiver_id);
+        const activePeriod = getCurrentActivePeriod(caregiver.caregiver_id) || current;
         
-        // Generate next period if current exists but no next period, or if current period is ending within 1 day
-        if (current && !next) {
-          const timeDiffMs = current.endDate.getTime() - today.getTime();
-          const timeDiffDays = Math.ceil(timeDiffMs / (1000 * 60 * 60 * 24));
-          
-          // Generate next period if current period ends within 1 day or has already ended
-          if (timeDiffDays <= 1) {
-            const newPeriod = await generateNextShiftPeriod(caregiver.caregiver_id);
-            if (newPeriod) {
-              hasGeneratedNewShifts = true;
-              toast({
-                title: "Auto-Rotation Activated",
-                description: `Next ${newPeriod.shiftType} shift period (${newPeriod.shiftsCount} days) assigned to ${getCaregiverName(newPeriod.caregiverId)}`,
-                duration: 5000,
-              });
-            }
+        // Generate next period when the active period is within the configured lead time.
+        if (activePeriod && !next && isShiftPeriodAboutToEnd(caregiver.caregiver_id)) {
+          const newPeriod = await generateNextShiftPeriod(caregiver.caregiver_id);
+          if (newPeriod) {
+            hasGeneratedNewShifts = true;
+            toast({
+              title: "Auto-Rotation Activated",
+              description: `Next ${newPeriod.shiftType} shift period (${newPeriod.shiftsCount} days) assigned to ${getCaregiverName(newPeriod.caregiverId)}`,
+              duration: 5000,
+            });
           }
         }
         
@@ -1149,6 +1173,7 @@ const Schedule = () => {
                         today.setHours(0, 0, 0, 0);
                         const isPastShift = shiftDate < today;
                         const isAboutToEnd = isShiftAboutToEnd(firstShift);
+                        const nextRotationInfo = getNextRotationInfo(caregiverId);
 
                         return (
                           <TableRow key={caregiverId} className="hover:bg-muted/50">
@@ -1163,6 +1188,14 @@ const Schedule = () => {
                                     {caregiverIds.length > 1
                                       ? `${caregiverIds.length} merged records`
                                       : shiftTypeLabel}
+                                  </div>
+                                  <div className="mt-1">
+                                    <Badge
+                                      variant={nextRotationInfo.variant}
+                                      className={`text-[10px] font-medium ${nextRotationInfo.className}`.trim()}
+                                    >
+                                      {nextRotationInfo.label}
+                                    </Badge>
                                   </div>
                                 </div>
                               </div>
@@ -1265,6 +1298,7 @@ const Schedule = () => {
                           dayShifts.map((shift) => {
                             const periodMeta = getShiftPeriodMeta(shift);
                             const isNightShift = shift.shift_type === 'Night';
+                            const nextRotationInfo = getNextRotationInfo(shift.caregiver_id);
                             const shiftCardClass = isNightShift
                               ? 'rounded-md border border-slate-600 bg-slate-950/90 p-2 text-xs text-slate-50 shadow-sm shadow-slate-950/20'
                               : 'rounded-md border border-primary/20 bg-primary/10 p-2 text-xs shadow-sm';
@@ -1287,6 +1321,14 @@ const Schedule = () => {
                                   <span className={isNightShift ? 'text-[10px] text-slate-300' : 'text-[10px] text-muted-foreground'}>
                                     {periodMeta.position}/{periodMeta.total} day{periodMeta.total !== 1 ? 's' : ''}
                                   </span>
+                                </div>
+                                <div className="mt-2">
+                                  <Badge
+                                    variant={nextRotationInfo.variant}
+                                    className={`text-[10px] font-medium ${nextRotationInfo.className}`.trim()}
+                                  >
+                                    {nextRotationInfo.label}
+                                  </Badge>
                                 </div>
                               </div>
                             );

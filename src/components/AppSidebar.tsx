@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
+import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
@@ -115,6 +116,7 @@ const navigationItemsAfterManagement = [
 export function AppSidebar() {
   const { state } = useSidebar()
   const { userData, logout } = useAuth()
+  const { setTheme } = useTheme()
   const location = useLocation()
   const currentPath = location.pathname
   const collapsed = state === "collapsed"
@@ -145,6 +147,7 @@ export function AppSidebar() {
 
   const handleLogout = async () => {
     try {
+      setTheme('light')
       await logout()
     } catch (error) {
       console.error('Logout error:', error)

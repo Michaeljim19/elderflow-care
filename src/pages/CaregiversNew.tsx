@@ -61,6 +61,22 @@ const Caregivers = () => {
     role: "" as "nurse" | "caregiver" | "admin" | "doctor" | "family" | ""
   })
 
+  const normalizePhilippineContactNumber = (value: string) => {
+    const digits = value.replace(/\D/g, '')
+
+    if (digits.startsWith('63') && digits.length === 12) {
+      return `0${digits.slice(2)}`
+    }
+
+    if (digits.startsWith('9') && digits.length === 10) {
+      return `0${digits}`
+    }
+
+    return digits
+  }
+
+  const isValidPhilippineContactNumber = (value: string) => /^09\d{9}$/.test(value)
+
   // Load caregivers on component mount
   useEffect(() => {
     const loadData = async () => {
@@ -99,10 +115,21 @@ const Caregivers = () => {
   }
 
   const handleAddCaregiver = async () => {
+    const normalizedContactNumber = normalizePhilippineContactNumber(formData.contact_number)
+
     if (!formData.first_name || !formData.last_name || !formData.email || !formData.contact_number || !formData.shift_type) {
       toast({
         title: "Validation Error",
         description: "Please fill in all required fields.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!isValidPhilippineContactNumber(normalizedContactNumber)) {
+      toast({
+        title: "Invalid Contact Number",
+        description: "Enter a valid Philippine mobile number like 09XXXXXXXXX or +639XXXXXXXXX.",
         variant: "destructive"
       })
       return
@@ -117,7 +144,7 @@ const Caregivers = () => {
         last_name: formData.last_name,
         birthday: formData.birthday,
         email: formData.email,
-        contact_number: parseInt(formData.contact_number),
+        contact_number: normalizedContactNumber,
         address: formData.address,
         shift_type: formData.shift_type as "Day" | "Night" | "Rotating" | "On-call",
         role: formData.role as "nurse" | "caregiver" | "admin" | "doctor" | "family"
@@ -272,7 +299,10 @@ const Caregivers = () => {
                   <Label htmlFor="phone">Contact Number *</Label>
                   <Input 
                     id="phone" 
-                    placeholder="Enter contact number"
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                    placeholder="09XXXXXXXXX or +639XXXXXXXXX"
                     value={formData.contact_number}
                     onChange={(e) => handleInputChange("contact_number", e.target.value)}
                   />

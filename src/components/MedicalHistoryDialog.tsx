@@ -465,7 +465,11 @@ const MedicalHistoryDialog: React.FC<MedicalHistoryDialogProps> = ({
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
         {trigger || (
-          <Button variant="ghost" size="sm" className="gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 border-slate-300 bg-white text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+          >
             <Heart className="h-4 w-4" />
             Medical History
           </Button>
@@ -492,7 +496,7 @@ const MedicalHistoryDialog: React.FC<MedicalHistoryDialogProps> = ({
                   // Test with a sample image
                   handleViewFile('https://via.placeholder.com/600x400/0084ff/ffffff.png?text=Test+Image');
                 }} 
-                className="gap-2"
+                className="gap-2 border-slate-300 bg-white text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
               >
                 <Eye className="h-4 w-4" />
                 Test File Viewer
@@ -572,7 +576,7 @@ const MedicalHistoryDialog: React.FC<MedicalHistoryDialogProps> = ({
                         type="button"
                         variant="outline"
                         onClick={handleCameraCapture}
-                        className="gap-2 bg-white hover:bg-blue-50 border-blue-200 text-blue-700"
+                        className="gap-2 bg-white text-blue-700 hover:bg-blue-50 border-blue-200 dark:bg-slate-900 dark:text-blue-300 dark:hover:bg-slate-800 dark:border-slate-700"
                         disabled={saving}
                       >
                         <Camera className="h-4 w-4" />
@@ -582,7 +586,7 @@ const MedicalHistoryDialog: React.FC<MedicalHistoryDialogProps> = ({
                         type="button"
                         variant="outline"
                         onClick={handleFileUpload}
-                        className="gap-2 bg-white hover:bg-green-50 border-green-200 text-green-700"
+                        className="gap-2 bg-white text-green-700 hover:bg-green-50 border-green-200 dark:bg-slate-900 dark:text-green-300 dark:hover:bg-slate-800 dark:border-slate-700"
                         disabled={saving}
                       >
                         <Image className="h-4 w-4" />
@@ -629,7 +633,12 @@ const MedicalHistoryDialog: React.FC<MedicalHistoryDialogProps> = ({
                 )}
 
                 <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={resetForm} disabled={saving}>
+                  <Button
+                    variant="outline"
+                    onClick={resetForm}
+                    disabled={saving}
+                    className="border-slate-300 bg-white text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                  >
                     Cancel
                   </Button>
                   <Button onClick={handleSubmit} disabled={saving}>
@@ -674,10 +683,10 @@ const MedicalHistoryDialog: React.FC<MedicalHistoryDialogProps> = ({
                       <div className="flex items-start justify-between">
                         <div className="flex-1 space-y-3">
                           <div className="flex items-center gap-3">
-                            <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                            <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-200 dark:border-red-800">
                               {history.condition}
                             </Badge>
-                            <div className="flex items-center gap-1 text-sm text-gray-500">
+                            <div className="flex items-center gap-1 text-sm text-slate-300">
                               <Calendar className="h-4 w-4" />
                               Diagnosed: {formatDate(history.date_diagnosed)}
                             </div>
@@ -685,14 +694,14 @@ const MedicalHistoryDialog: React.FC<MedicalHistoryDialogProps> = ({
                           
                           <div className="space-y-2">
                             <div>
-                              <h4 className="font-medium text-gray-900">Description:</h4>
-                              <p className="text-gray-700 text-sm">{history.description}</p>
+                              <h4 className="font-medium text-slate-100">Description:</h4>
+                              <p className="text-slate-200 text-sm">{history.description}</p>
                             </div>
                             
                             {history.treatment && (
                               <div>
-                                <h4 className="font-medium text-gray-900">Treatment:</h4>
-                                <p className="text-gray-700 text-sm">{history.treatment}</p>
+                                <h4 className="font-medium text-slate-100">Treatment:</h4>
+                                <p className="text-slate-200 text-sm">{history.treatment}</p>
                               </div>
                             )}
                           </div>
@@ -700,7 +709,7 @@ const MedicalHistoryDialog: React.FC<MedicalHistoryDialogProps> = ({
                           {/* Render attachments */}
                           {renderAttachments(history.attachments)}
                           
-                          <div className="text-xs text-gray-500 mt-3">
+                          <div className="text-xs text-slate-400 mt-3">
                             Created: {formatDate(history.created_at)} • 
                             Updated: {formatDate(history.updated_at)}
                           </div>

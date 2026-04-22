@@ -74,7 +74,7 @@ export interface Caregiver {
   specialization?: string;
   max_patients?: number;
   assigned_patients_count?: number;
-  status?: 'Active' | 'Inactive' | 'On Leave';
+  status?: 'pending' | 'Active' | 'Inactive' | 'On Leave';
   
   // Additional fields found in the system
   middle_name?: string;

@@ -17,6 +17,7 @@ import { auth, db, storage } from '@/lib/firebase';
 import { COLLECTIONS } from './collections';
 import { Caregiver, ShiftType, CaregiverRole, getMaxPatientsForShift } from '@/types';
 import { addCaregiverShift } from './caregiverShifts';
+import { invalidateUsersCache } from './users';
 
 // Helper function to delete existing shift records for a caregiver
 const deleteExistingShiftRecords = async (caregiverId: string): Promise<void> => {
@@ -116,7 +117,7 @@ type FirebaseCaregiver = {
   role: CaregiverRole;
   assigned_patients_count?: number;
   max_patients?: number;
-  status?: 'Active' | 'Inactive'; // Add status field
+  status?: 'pending' | 'Active' | 'Inactive'; // Add status field
   created_at?: Timestamp;
   updated_at?: Timestamp;
   license_number?: string;        // Add this field
@@ -128,6 +129,148 @@ type FirebaseCaregiver = {
   original_shift_type?: 'Day' | 'Night';
   original_shift_start_date?: any;
   original_shift_end_date?: any;
+};
+
+const normalizeIdentityKey = (value: unknown): string => {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.trim().toLowerCase();
+};
+
+const isCaregiverUserRecord = (record: any): boolean => {
+  const role = normalizeIdentityKey(record?.role);
+  const legacyRole = normalizeIdentityKey(record?.user_lvl);
+
+  return role === 'caregiver' || legacyRole === 'caregiver';
+};
+
+const buildCaregiverFromUserRecord = (record: any): Caregiver => ({
+  caregiver_id: record.id || record.user_id || '',
+  user_id: record.user_id || record.id,
+  first_name: record.first_name || record.firstName || '',
+  middle_name: record.middle_name || record.middleName,
+  last_name: record.last_name || record.lastName || '',
+  birthday: record.birthday || record.birthdate || record.date_of_birth,
+  email: record.email || '',
+  contact_number: typeof record.contact_number === 'number'
+    ? record.contact_number
+    : (record.contact_number ? Number(record.contact_number) : (record.phone ? Number(record.phone) : 0)),
+  address: record.address || '',
+  shift_type: record.shift_type || 'Day',
+  shift_start_date: record.shift_start_date,
+  shift_end_date: record.shift_end_date,
+  role: record.role || 'Eldercare',
+  hire_date: record.hire_date || new Date().toISOString(),
+  license_number: record.license_number || '',
+  license_picture: record.license_picture || record.license_image_base64 || '',
+  specialization: record.specialization || (Array.isArray(record.specializations) ? record.specializations.join(', ') : record.specializations || ''),
+  max_patients: record.max_patients || getMaxPatientsForShift(record.shift_type || 'Day'),
+  assigned_patients_count: record.assigned_patients_count ?? 0,
+  status: deriveCaregiverStatus(record),
+  contract_start_date: record.contract_start_date,
+  contract_end_date: record.contract_end_date,
+  temporary_schedule_reason: record.temporary_schedule_reason,
+  original_shift_type: record.original_shift_type,
+  original_shift_start_date: record.original_shift_start_date,
+  original_shift_end_date: record.original_shift_end_date,
+  created_at: record.created_at,
+  updated_at: record.updated_at
+});
+
+const normalizeAddress = (value: any): Caregiver['address'] => {
+  if (!value) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    const trimmedValue = value.trim();
+
+    if (!trimmedValue) {
+      return '';
+    }
+
+    try {
+      const parsedValue = JSON.parse(trimmedValue);
+      if (parsedValue && typeof parsedValue === 'object') {
+        return {
+          province: parsedValue.province || parsedValue.province_name || '',
+          city_municipality: parsedValue.city_municipality || parsedValue.city || parsedValue.municipality || '',
+          barangay: parsedValue.barangay || parsedValue.barangay_name || '',
+          street: parsedValue.street || parsedValue.street_address || parsedValue.address_line || ''
+        };
+      }
+    } catch {
+      const parts = trimmedValue.split(',').map(part => part.trim()).filter(Boolean);
+
+      if (parts.length >= 4) {
+        return {
+          street: parts.slice(0, parts.length - 3).join(', '),
+          barangay: parts[parts.length - 3],
+          city_municipality: parts[parts.length - 2],
+          province: parts[parts.length - 1]
+        };
+      }
+
+      return {
+        province: '',
+        city_municipality: '',
+        barangay: '',
+        street: trimmedValue
+      };
+    }
+  }
+
+  if (typeof value === 'object') {
+    return {
+      province: value.province || value.province_name || '',
+      city_municipality: value.city_municipality || value.city || value.municipality || '',
+      barangay: value.barangay || value.barangay_name || '',
+      street: value.street || value.street_address || value.address_line || ''
+    };
+  }
+
+  return '';
+};
+
+const getCaregiverIdentityKeys = (record: Partial<Caregiver> & { first_name?: string; last_name?: string }): string[] => {
+  return [
+    record.caregiver_id,
+    record.user_id,
+    record.email,
+    record.first_name && record.last_name ? `${record.first_name}|${record.last_name}` : ''
+  ]
+    .map(normalizeIdentityKey)
+    .filter(Boolean);
+};
+
+const deriveCaregiverStatus = (record: {
+  status?: string;
+  contract_start_date?: string;
+  contract_end_date?: string;
+}): Caregiver['status'] => {
+  const hasContract = Boolean(record.contract_start_date || record.contract_end_date);
+
+  if (!hasContract) {
+    return 'pending';
+  }
+
+  const normalizedStatus = normalizeIdentityKey(record.status);
+
+  if (normalizedStatus === 'pending') {
+    return 'pending';
+  }
+
+  if (normalizedStatus === 'inactive') {
+    return 'Inactive';
+  }
+
+  if (normalizedStatus === 'on leave') {
+    return 'On Leave';
+  }
+
+  return 'Active';
 };
 
 // Get all caregivers with proper User-Caregiver entity linking
@@ -145,7 +288,15 @@ export const getCaregivers = async (): Promise<Caregiver[]> => {
     const usersByUserId = new Map(allUsers.filter(user => user.user_id).map(user => [user.user_id, user]));
     const usersByEmail = new Map(allUsers.filter(user => user.email).map(user => [user.email, user]));
 
-    const caregiversWithUserData = caregiversSnapshot.docs.map((caregiverDoc) => {
+    const caregiversWithUserData: Caregiver[] = [];
+    const seenIdentityKeys = new Set<string>();
+
+    const registerCaregiverRecord = (caregiver: Caregiver) => {
+      caregiversWithUserData.push(caregiver);
+      getCaregiverIdentityKeys(caregiver).forEach(key => seenIdentityKeys.add(key));
+    };
+
+    caregiversSnapshot.docs.forEach((caregiverDoc) => {
       const caregiverData = caregiverDoc.data();
       const caregiver_id = caregiverDoc.id;
 
@@ -163,6 +314,17 @@ export const getCaregivers = async (): Promise<Caregiver[]> => {
             )
           : null);
 
+      const caregiverAddress = normalizeAddress(caregiverData.address);
+      const userAddress = normalizeAddress(userData?.address);
+      const combinedAddress = typeof caregiverAddress === 'object'
+        ? {
+            province: caregiverAddress.province || (typeof userAddress === 'object' ? userAddress.province : ''),
+            city_municipality: caregiverAddress.city_municipality || (typeof userAddress === 'object' ? userAddress.city_municipality : ''),
+            barangay: caregiverAddress.barangay || (typeof userAddress === 'object' ? userAddress.barangay : ''),
+            street: caregiverAddress.street || (typeof userAddress === 'object' ? userAddress.street : '')
+          }
+        : userAddress || caregiverAddress;
+
       const combinedData: Caregiver = {
         caregiver_id,
         user_id: userData?.user_id || userData?.id || caregiverData.user_id || caregiver_id,
@@ -170,13 +332,13 @@ export const getCaregivers = async (): Promise<Caregiver[]> => {
         last_name: userData?.last_name || caregiverData.last_name || '',
         email: userData?.email || caregiverData.email || '',
         contact_number: userData?.contact_number || caregiverData.contact_number || 0,
-        address: userData?.address || caregiverData.address || '',
+        address: combinedAddress,
         shift_type: caregiverData.shift_type || 'Day',
         shift_start_date: caregiverData.shift_start_date,
         shift_end_date: caregiverData.shift_end_date,
         role: caregiverData.role || 'Eldercare',
         hire_date: caregiverData.hire_date || new Date().toISOString(),
-        status: caregiverData.status || 'Active',
+        status: deriveCaregiverStatus(caregiverData),
         assigned_patients_count: userData?.assigned_patients_count ?? caregiverData.assigned_patients_count ?? 0,
         max_patients: caregiverData.max_patients || getMaxPatientsForShift(caregiverData.shift_type || 'Day'),
         license_number: caregiverData.license_number || '',
@@ -194,7 +356,22 @@ export const getCaregivers = async (): Promise<Caregiver[]> => {
         updated_at: caregiverData.updated_at || userData?.updated_at
       };
 
-      return combinedData;
+      registerCaregiverRecord(combinedData);
+    });
+
+    allUsers.forEach((user) => {
+      if (!isCaregiverUserRecord(user)) {
+        return;
+      }
+
+      const syntheticCaregiver = buildCaregiverFromUserRecord(user);
+      const identityKeys = getCaregiverIdentityKeys(syntheticCaregiver);
+
+      if (identityKeys.some(key => seenIdentityKeys.has(key))) {
+        return;
+      }
+
+      registerCaregiverRecord(syntheticCaregiver);
     });
     
     // Sort by first name
@@ -219,7 +396,7 @@ export const getCaregiver = async (caregiverId: string): Promise<Caregiver | nul
     const { getUserById } = await import('./users');
     const user = await getUserById(caregiverId);
     
-    if (user && user.role === 'Caregiver') {
+    if (user && normalizeIdentityKey(user.role) === 'caregiver') {
       // Convert User object to Caregiver object
       return {
         caregiver_id: user.id,
@@ -231,7 +408,7 @@ export const getCaregiver = async (caregiverId: string): Promise<Caregiver | nul
         shift_type: (user as any).shift_type || 'Day',
         role: (user as any).role || 'caregiver',
         hire_date: (user as any).hire_date || new Date().toISOString(),
-        status: (user as any).status || 'Active',
+        status: deriveCaregiverStatus(user as any),
         assigned_patients_count: (user as any).assigned_patients_count || 0,
         max_patients: (user as any).max_patients || 2,
         license_number: (user as any).license_number || '',
@@ -422,7 +599,7 @@ export const updateCaregiver = async (caregiverId: string, updates: Partial<Fire
       updatesWithTimestamp.max_patients = getMaxPatientsForShift(updates.shift_type);
     }
     
-    await updateDoc(docRef, updatesWithTimestamp);
+    await setDoc(docRef, updatesWithTimestamp, { merge: true });
     
     // If schedule-related fields are updated, regenerate shift records
     if (isScheduleUpdated) {
@@ -464,14 +641,17 @@ export const updateCaregiver = async (caregiverId: string, updates: Partial<Fire
 export const deleteCaregiver = async (caregiverId: string): Promise<void> => {
   try {
     console.log('Deleting caregiver:', caregiverId);
+    const userDeleteRefs: Array<{ id: string; ref: ReturnType<typeof doc> }> = [];
     
     // First, get the caregiver data to find the corresponding user_id
     const caregiverDoc = await getDoc(doc(db, COLLECTIONS.CAREGIVERS, caregiverId));
-    let user_id = null;
+    let user_id: string | null = null;
+    let caregiverEmail: string | null = null;
     
     if (caregiverDoc.exists()) {
       const caregiverData = caregiverDoc.data();
       user_id = caregiverData.user_id || caregiverId; // Fallback to caregiverId
+      caregiverEmail = caregiverData.email || null;
       console.log(`Found caregiver record with user_id: ${user_id}`);
     } else {
       // If no caregiver-specific record exists, assume caregiverId IS the user_id
@@ -521,12 +701,41 @@ export const deleteCaregiver = async (caregiverId: string): Promise<void> => {
       console.log(`Scheduling deletion of caregiver record: ${caregiverId}`);
     }
     
-    // Delete from users collection using user_id
-    deletePromises.push(deleteDoc(doc(db, COLLECTIONS.USERS, user_id)));
-    console.log(`Scheduling deletion of user record: ${user_id}`);
+    // Delete from users collection using user_id and any matching user document
+    if (user_id) {
+      const userDocById = await getDoc(doc(db, COLLECTIONS.USERS, user_id));
+      if (userDocById.exists()) {
+        deletePromises.push(deleteDoc(userDocById.ref));
+        console.log(`Scheduling deletion of user document by ID: ${user_id}`);
+      }
+
+      const userIdQuery = query(
+        collection(db, COLLECTIONS.USERS),
+        where('user_id', '==', user_id)
+      );
+      const userIdSnapshot = await getDocs(userIdQuery);
+      userIdSnapshot.docs.forEach((userDoc) => {
+        deletePromises.push(deleteDoc(userDoc.ref));
+        console.log(`Scheduling deletion of user record with user_id field: ${userDoc.id}`);
+      });
+    }
+
+    if (caregiverEmail) {
+      const emailQuery = query(
+        collection(db, COLLECTIONS.USERS),
+        where('email', '==', caregiverEmail)
+      );
+      const emailSnapshot = await getDocs(emailQuery);
+      emailSnapshot.docs.forEach((userDoc) => {
+        deletePromises.push(deleteDoc(userDoc.ref));
+        console.log(`Scheduling deletion of user record with email match: ${userDoc.id}`);
+      });
+    }
     
     // Execute all deletions
     await Promise.all(deletePromises);
+
+    invalidateUsersCache();
     
     console.log('Successfully deleted caregiver:', caregiverId);
   } catch (error) {

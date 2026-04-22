@@ -2448,7 +2448,6 @@ const Patients = () => {
                     <TableHead>Status</TableHead>
                     <TableHead>Caregivers</TableHead>
                     <TableHead>Contract</TableHead>
-                    <TableHead>Medical</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </tr>
                 </TableHeader>
@@ -2547,22 +2546,6 @@ const Patients = () => {
                           </div>
                         )}
                       </TableCell>
-                      <TableCell>
-                        <div className="text-sm text-muted-foreground dark:text-slate-400">
-                          {patient.medical_conditions && (
-                            <div className="flex items-center gap-1 mb-1">
-                              <Heart className="h-3 w-3 text-red-500" />
-                              <span className="text-xs">Conditions</span>
-                            </div>
-                          )}
-                          {patient.care_notes && (
-                            <div className="flex items-center gap-1">
-                              <Pill className="h-3 w-3 text-blue-500" />
-                              <span className="text-xs">Care Notes</span>
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           <Button 
@@ -2572,14 +2555,6 @@ const Patients = () => {
                             title="View Patient Details"
                           >
                             <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            onClick={() => setShowEmergencyContact(patient)}
-                            title="Emergency Contact Info"
-                          >
-                            <Shield className="h-4 w-4" />
                           </Button>
                           <MedicalHistoryDialog 
                             patient={patient}
@@ -2601,14 +2576,6 @@ const Patients = () => {
                             title="Edit Patient"
                           >
                             <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            onClick={() => openMedicalHistoryView(patient.patient_id)}
-                            title="View Medical History"
-                          >
-                            <FileText className="h-4 w-4" />
                           </Button>
                           <Button 
                             variant="ghost" 

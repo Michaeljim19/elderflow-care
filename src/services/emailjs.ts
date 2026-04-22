@@ -30,7 +30,7 @@ import emailjs from '@emailjs/browser'
  */
 
 // EmailJS Configuration - UPDATE THESE VALUES
-const EMAILJS_SERVICE_ID = 'service_70i1m0d' // Your actual service ID
+const EMAILJS_SERVICE_ID = 'service_gh12fms' // Your actual service ID
 const EMAILJS_TEMPLATE_ID = 'template_2ih1pol' // Your actual template ID - MAKE SURE THIS TEMPLATE HAS {{to_email}} AS RECIPIENT
 const EMAILJS_PUBLIC_KEY = 'NU8mlKxa48FyuSWw-' // Your provided API key
 
@@ -62,7 +62,7 @@ export const validateEmailJSConfig = (): { isValid: boolean; errors: string[] } 
 interface AccountCreationEmailData {
   to_email: string
   to_name: string
-  account_type: 'caregiver' | 'patient'
+  account_type: 'admin' | 'caregiver' | 'patient'
   temporary_password: string
   login_url: string
   verification_url?: string
@@ -73,21 +73,13 @@ interface AccountCreationEmailData {
 }
 
 export const sendAccountCreationEmail = async (data: AccountCreationEmailData): Promise<void> => {
-  try {
-    // Validate configuration first (temporarily disabled for testing)
-    const configValidation = validateEmailJSConfig()
-    if (!configValidation.isValid) {
-      console.warn('EmailJS Configuration Issues:')
-      configValidation.errors.forEach(error => console.warn('- ' + error))
-      console.warn('Proceeding with email send despite configuration warnings...')
-    }
-
-    // Template parameters for EmailJS (matching your template variables)
+  const sendOnce = async () => {
     const templateParams = {
       // Original message parameters (for the top part of the template)
       name: data.to_name,
       time: new Date().toLocaleString(),
-      message: data.admin_notes || 'Your caregiver account has been created successfully!',
+      subject: 'Your Care Account Credentials',
+      message: data.admin_notes || 'Your account has been created successfully!',
       
       // Company and account details
       company_name: 'Care',
@@ -95,6 +87,10 @@ export const sendAccountCreationEmail = async (data: AccountCreationEmailData): 
       login_url: data.login_url,
       username: data.username || data.to_email, // Use provided username or fall back to email
       temporary_password: data.temporary_password,
+      temporaryPassword: data.temporary_password,
+      password: data.temporary_password,
+      account_type: data.account_type,
+      role: data.account_type,
       
       // Confirmation/Verification URLs and button
       verification_url: data.verification_url || data.login_url,
@@ -111,6 +107,8 @@ export const sendAccountCreationEmail = async (data: AccountCreationEmailData): 
       // EmailJS destination (where the email is sent TO)
       to_email: data.to_email,
       to_name: data.to_name,
+      recipient_email: data.to_email,
+      recipient_name: data.to_name,
       
       // Additional EmailJS parameters to override template settings
       email_to: data.to_email, // Alternative parameter name
@@ -123,9 +121,8 @@ export const sendAccountCreationEmail = async (data: AccountCreationEmailData): 
     console.log('Public Key:', EMAILJS_PUBLIC_KEY)
     console.log('Template params:', templateParams)
     console.log('Sending TO EMAIL:', data.to_email)
-    
-    // Try using EmailJS with direct parameters to override template recipient
-    const response = await emailjs.send(
+
+    return emailjs.send(
       EMAILJS_SERVICE_ID,
       EMAILJS_TEMPLATE_ID,
       {
@@ -137,6 +134,25 @@ export const sendAccountCreationEmail = async (data: AccountCreationEmailData): 
       },
       EMAILJS_PUBLIC_KEY
     )
+  }
+
+  try {
+    // Validate configuration first (temporarily disabled for testing)
+    const configValidation = validateEmailJSConfig()
+    if (!configValidation.isValid) {
+      console.warn('EmailJS Configuration Issues:')
+      configValidation.errors.forEach(error => console.warn('- ' + error))
+      console.warn('Proceeding with email send despite configuration warnings...')
+    }
+
+    // Try twice in case the first request fails transiently
+    let response
+    try {
+      response = await sendOnce()
+    } catch (firstError) {
+      console.warn('First EmailJS send attempt failed, retrying ერთხელ...', firstError)
+      response = await sendOnce()
+    }
     
     if (response.status === 200) {
       console.log('Account creation email sent successfully via EmailJS')

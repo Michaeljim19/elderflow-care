@@ -47,8 +47,10 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
-import { Patient, Medication, Reminder, ReminderLog, NotificationTime } from "@/types"
+import { Patient, Medication, Reminder, ReminderLog, NotificationTime, Caregiver } from "@/types"
 import { getPatients } from "@/services/firebase/patients"
+import { getUsers } from "@/services/firebase/users"
+import { getCaregivers } from "@/services/firebase/caregivers"
 import { getMedications } from "@/services/firebase/medications"
 import { 
   getReminders, 
@@ -72,6 +74,8 @@ const Reminders = () => {
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [reminderLogs, setReminderLogs] = useState<ReminderLog[]>([])
   const [patients, setPatients] = useState<Patient[]>([])
+  const [users, setUsers] = useState<any[]>([])
+  const [caregivers, setCaregivers] = useState<Caregiver[]>([])
   const [medications, setMedications] = useState<Medication[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
@@ -117,10 +121,12 @@ const Reminders = () => {
         setLoading(true)
         console.log('Loading reminders data...')
         
-        const [remindersData, reminderLogsData, patientsData, medicationsData] = await Promise.all([
+        const [remindersData, reminderLogsData, patientsData, usersData, caregiversData, medicationsData] = await Promise.all([
           getReminders(),
           getReminderLogs(),
           getPatients(),
+          getUsers(),
+          getCaregivers(),
           getMedications()
         ])
         
@@ -129,11 +135,15 @@ const Reminders = () => {
         console.log('Reminder logs data loaded:', reminderLogsData)
         console.log('Sample reminder log data structure:', reminderLogsData[0])
         console.log('Patients data loaded:', patientsData)
+        console.log('Users data loaded:', usersData)
+        console.log('Caregivers data loaded:', caregiversData)
         console.log('Medications data loaded:', medicationsData)
         
         setReminders(remindersData)
         setReminderLogs(reminderLogsData)
         setPatients(patientsData)
+        setUsers(usersData)
+        setCaregivers(caregiversData)
         setMedications(medicationsData)
       } catch (error) {
         console.error("Error loading data:", error)
@@ -381,41 +391,47 @@ const Reminders = () => {
   }
 
   const getUserName = (userId: any) => {
-    // Handle different data types for userId
-    if (!userId) return 'Unknown User'
-    
-    // If it's a string, return as is
-    if (typeof userId === 'string') {
-      return userId || 'Unknown User'
+    if (!userId) return 'Unknown Patient'
+
+    const userKey = typeof userId === 'string'
+      ? userId.split('/').pop() || userId
+      : userId.id || userId.user_id || userId.uid || String(userId)
+
+    const user = users.find(item =>
+      item.id === userKey || item.user_id === userKey || item.uid === userKey
+    )
+
+    if (!user) {
+      return 'Unknown Patient'
     }
-    
-    // If it's an object, try to get the ID property
-    if (typeof userId === 'object' && userId.id) {
-      return userId.id
-    }
-    
-    // Fallback to string conversion
-    return String(userId) || 'Unknown User'
+
+    return [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.email || 'Unknown Patient'
   }
 
   const getCaregiverName = (caregiverRef: any) => {
-    // Handle different data types for caregiverRef
     if (!caregiverRef) return 'Unknown Caregiver'
-    
-    // If it's a string, extract ID from reference path
-    if (typeof caregiverRef === 'string') {
-      const refParts = caregiverRef.split('/')
-      const caregiverId = refParts[refParts.length - 1]
-      return caregiverId || 'Unknown Caregiver'
+
+    const caregiverId = typeof caregiverRef === 'string'
+      ? caregiverRef.split('/').pop() || caregiverRef
+      : caregiverRef.id || caregiverRef.caregiver_id || caregiverRef.user_id || caregiverRef.uid || String(caregiverRef)
+
+    const caregiver = caregivers.find(item =>
+      item.caregiver_id === caregiverId || item.user_id === caregiverId || item.id === caregiverId
+    )
+
+    if (caregiver) {
+      return [caregiver.first_name, caregiver.last_name].filter(Boolean).join(' ').trim() || 'Unknown Caregiver'
     }
-    
-    // If it's an object, try to get the ID property
-    if (typeof caregiverRef === 'object' && caregiverRef.id) {
-      return caregiverRef.id
+
+    const user = users.find(item =>
+      item.id === caregiverId || item.user_id === caregiverId || item.uid === caregiverId
+    )
+
+    if (user) {
+      return [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.email || 'Unknown Caregiver'
     }
-    
-    // Fallback to string conversion
-    return String(caregiverRef) || 'Unknown Caregiver'
+
+    return 'Unknown Caregiver'
   }
 
   const getPatientName = (patientId: string) => {
@@ -466,10 +482,14 @@ const Reminders = () => {
   })
 
   const filteredReminderLogs = reminderLogs.filter(log => {
-    const matchesSearch = getUserName(log.userId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         getCaregiverName(log.caregiverRef || '').toLowerCase().includes(searchTerm.toLowerCase())
+    const userName = getUserName(log.userId || '')
+    const caregiverName = getCaregiverName(log.caregiverRef || '')
+    const matchesSearch = userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         caregiverName.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesStatus = filterStatus === "all" || log.status.toLowerCase() === filterStatus.toLowerCase()
-    return matchesSearch && matchesStatus
+    const hasKnownUser = userName !== 'Unknown Patient'
+    const hasKnownCaregiver = caregiverName !== 'Unknown Caregiver'
+    return matchesSearch && matchesStatus && (hasKnownUser || hasKnownCaregiver)
   })
 
   if (loading) {
@@ -641,7 +661,7 @@ const Reminders = () => {
                   <TableRow>
                     <TableHead>Title</TableHead>
                     <TableHead>Type</TableHead>
-                    <TableHead>User ID</TableHead>
+                    <TableHead>Patient</TableHead>
                     <TableHead>Caregiver</TableHead>
                     <TableHead>Notification Times</TableHead>
                     <TableHead>Frequency</TableHead>
@@ -735,7 +755,7 @@ const Reminders = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Reminder ID</TableHead>
-                    <TableHead>User ID</TableHead>
+                    <TableHead>Patient</TableHead>
                     <TableHead>Caregiver</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Acknowledged By</TableHead>
@@ -825,7 +845,7 @@ const Reminders = () => {
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-sm font-medium text-muted-foreground">User ID</Label>
+                  <Label className="text-sm font-medium text-muted-foreground">Patient</Label>
                   <p className="text-sm">{getUserName(viewingReminder.userId)}</p>
                 </div>
                 <div>
@@ -1158,7 +1178,7 @@ const Reminders = () => {
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-sm font-medium text-muted-foreground">User ID</Label>
+                  <Label className="text-sm font-medium text-muted-foreground">Patient</Label>
                   <p className="text-sm font-semibold">{getUserName(viewingReminderLog.userId || '')}</p>
                 </div>
                 <div>

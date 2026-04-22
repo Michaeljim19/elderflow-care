@@ -124,6 +124,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const logout = async () => {
     try {
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('theme', 'light')
+        window.document.documentElement.classList.remove('dark')
+      }
       await signOut(auth);
     } catch (error) {
       console.error('Error signing out:', error);

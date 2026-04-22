@@ -19,17 +19,19 @@ import {
 } from 'firebase/auth'
 import { db } from '../../lib/firebase'
 import { COLLECTIONS } from './collections'
+import { getMaxPatientsForShift } from '../../types'
 import type { Account } from '../../types'
 
 // Helper function to update caregiver and shift records after Firebase Auth creation
 const updateCaregiverRecordsWithNewId = async (oldDocumentId: string, newFirebaseUid: string, accountRole: string): Promise<void> => {
   try {
-    if (accountRole !== 'caregiver') {
+    if (String(accountRole || '').toLowerCase() !== 'caregiver') {
       console.log('Not a caregiver account, skipping caregiver record updates')
       return
     }
 
     console.log(`🔗 Updating caregiver records: ${oldDocumentId} -> ${newFirebaseUid}`)
+
     
     // Update caregiver record to use the new Firebase UID as caregiver_id
     const caregiversRef = collection(db, 'caregivers')
@@ -226,6 +228,7 @@ const cleanupDuplicateUsers = async (accountId: string): Promise<void> => {
 export const createFirebaseAuthUser = async (account: Account): Promise<string | null> => {
   try {
     console.log('Creating Firebase Auth user for account:', account.id)
+    const isCaregiverAccount = String(account.role || '').toLowerCase() === 'caregiver'
     
     // Create Firebase Auth user with generated credentials
     const auth = getAuth()
@@ -237,6 +240,43 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
     
     const user = userCredential.user
     console.log('Firebase Auth user created:', user.uid)
+
+    const buildCaregiverMirror = (sourceData: any, fallbackName: string) => ({
+      caregiver_id: user.uid,
+      user_id: user.uid,
+      first_name: sourceData.first_name || fallbackName.split(' ')[0] || '',
+      middle_name: sourceData.middle_name || '',
+      last_name: sourceData.last_name || fallbackName.split(' ').slice(1).join(' ') || '',
+      email: sourceData.email || account.generated_email,
+      contact_number: typeof sourceData.contact_number === 'number'
+        ? sourceData.contact_number
+        : (sourceData.contact_number ? Number(sourceData.contact_number) : (sourceData.phone ? Number(sourceData.phone) : 0)),
+      address: sourceData.address || '',
+      shift_type: sourceData.shift_type || 'Day',
+      shift_start_date: sourceData.shift_start_date || null,
+      shift_end_date: sourceData.shift_end_date || null,
+      role: sourceData.role || 'Eldercare',
+      assigned_patients_count: sourceData.assigned_patients_count || 0,
+      max_patients: sourceData.max_patients || getMaxPatientsForShift(sourceData.shift_type || 'Day'),
+      status: sourceData.status || 'Active',
+      license_number: sourceData.license_number || '',
+      license_picture: sourceData.license_picture || sourceData.license_image_base64 || '',
+      contract_start_date: sourceData.contract_start_date,
+      contract_end_date: sourceData.contract_end_date,
+      specialization: sourceData.specialization,
+      birthday: sourceData.birthday || sourceData.birthdate || sourceData.date_of_birth,
+      created_at: sourceData.created_at || Timestamp.now(),
+      updated_at: Timestamp.now()
+    })
+
+    const mirrorCaregiverRecord = async (sourceData: any, fallbackName: string, targetDocId: string = user.uid) => {
+      if (String(account.role || '').toLowerCase() !== 'caregiver') {
+        return
+      }
+
+      await setDoc(doc(db, 'caregivers', targetDocId), buildCaregiverMirror(sourceData, fallbackName), { merge: true })
+      console.log(`✅ Mirrored caregiver record to caregivers/${targetDocId}`)
+    }
     
     // Update the user's display name
     await updateProfile(user, {
@@ -253,30 +293,59 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
         // Get the existing user data
         const existingUserDoc = snapshot.docs[0]
         const existingUserData = existingUserDoc.data()
+        const canonicalUserId = existingUserDoc.id
         
         console.log(`Found existing user record: ${existingUserDoc.id}, moving to Firebase Auth UID: ${user.uid}`)
-        
-        // Create a new document with Firebase Auth UID as document ID
-        await setDoc(doc(db, 'users', user.uid), {
-          ...existingUserData,  // Keep all existing data
-          uid: user.uid,        // Add Firebase Auth UID
-          user_id: user.uid,    // Set user_id to match Firebase Auth UID for consistency
-          auth_created: true,
-          emailVerified: true,
-          verified: true,
-          updated_at: Timestamp.now()
-        })
-        
-        // Update caregiver and shift records if this is a caregiver account
-        await updateCaregiverRecordsWithNewId(existingUserDoc.id, user.uid, account.role)
-        
-        // Update patient and medical history records if this is a patient account
-        await updatePatientRecordsWithNewId(existingUserDoc.id, user.uid, account.role)
-        
-        // Delete the old document (with the old document ID)
-        await deleteDoc(existingUserDoc.ref)
-        
-        console.log(`✅ Moved user record from ${existingUserDoc.id} to ${user.uid} (Firebase Auth UID now matches document ID)`)
+
+        if (isCaregiverAccount) {
+          // Keep the original caregiver/user document ID so the user table stays aligned with the caregiver record.
+          await setDoc(doc(db, 'users', canonicalUserId), {
+            ...existingUserData,
+            uid: user.uid,
+            auth_uid: user.uid,
+            user_id: canonicalUserId,
+            auth_created: true,
+            emailVerified: true,
+            verified: true,
+            updated_at: Timestamp.now()
+          }, { merge: true })
+
+          await mirrorCaregiverRecord(existingUserData, account.name, canonicalUserId)
+
+          const caregiverRef = doc(db, 'caregivers', canonicalUserId)
+          await setDoc(caregiverRef, {
+            caregiver_id: canonicalUserId,
+            user_id: canonicalUserId,
+            auth_uid: user.uid,
+            updated_at: Timestamp.now()
+          }, { merge: true })
+
+          console.log(`✅ Preserved caregiver/user document ID: ${canonicalUserId} (Firebase Auth UID stored separately as auth_uid)`)
+        } else {
+          // Create a new document with Firebase Auth UID as document ID
+          await setDoc(doc(db, 'users', user.uid), {
+            ...existingUserData,  // Keep all existing data
+            uid: user.uid,        // Add Firebase Auth UID
+            user_id: user.uid,    // Set user_id to match Firebase Auth UID for consistency
+            auth_created: true,
+            emailVerified: true,
+            verified: true,
+            updated_at: Timestamp.now()
+          })
+
+          await mirrorCaregiverRecord(existingUserData, account.name)
+          
+          // Update caregiver and shift records if this is a caregiver account
+          await updateCaregiverRecordsWithNewId(existingUserDoc.id, user.uid, account.role)
+          
+          // Update patient and medical history records if this is a patient account
+          await updatePatientRecordsWithNewId(existingUserDoc.id, user.uid, account.role)
+          
+          // Delete the old document (with the old document ID)
+          await deleteDoc(existingUserDoc.ref)
+          
+          console.log(`✅ Moved user record from ${existingUserDoc.id} to ${user.uid} (Firebase Auth UID now matches document ID)`)
+        }
       } else {
         console.warn('⚠️ No existing user found with accountId:', account.id)
         // Fallback: create minimal user record with Firebase Auth UID as document ID
@@ -303,6 +372,14 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
           auth_created: true,
           createdFrom: 'account-management'
         })
+
+        await mirrorCaregiverRecord({
+          first_name,
+          middle_name,
+          last_name,
+          email: account.generated_email,
+          role: account.role
+        }, account.name)
       }
       
     } catch (updateError) {
@@ -331,6 +408,14 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
         auth_created: true,
         createdFrom: 'account-management'
       })
+
+      await mirrorCaregiverRecord({
+        first_name,
+        middle_name,
+        last_name,
+        email: account.generated_email,
+        role: account.role
+      }, account.name)
     }
     
     console.log('Firebase Auth user created and linked successfully - document ID matches Firebase Auth UID:', user.uid)

@@ -10,7 +10,7 @@ import { storage } from '@/lib/firebase';
 
 // Allowed file types for medical attachments
 export const ALLOWED_FILE_TYPES = {
-  images: ['image/jpeg'],
+  images: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'],
   documents: ['application/pdf'],
   all: [] as string[]
 };

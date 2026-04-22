@@ -33,8 +33,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Timestamp } from 'firebase/firestore'
 import { Patient, Medication } from '@/types'
 import { getPatients } from '@/services/firebase/patients'
-import { addMedication, deleteMedication, getMedicationsByPatient } from '@/services/firebase/medications'
-import { addReminder, deleteRemindersByMedication, markMedicationReminderTaken } from '@/services/firebase/reminders'
+import { addMedication, deleteMedication, getMedicationsByPatient, updateMedication } from '@/services/firebase/medications'
+import { addReminder, deleteRemindersByMedication, getReminders, markMedicationReminderTaken, updateReminder } from '@/services/firebase/reminders'
 import { toast } from '@/hooks/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
 
@@ -54,7 +54,21 @@ const Medications = () => {
   const [currentPatientMedications, setCurrentPatientMedications] = useState<Medication[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMedications, setLoadingMedications] = useState(false)
+  const [isEditMedicationOpen, setIsEditMedicationOpen] = useState(false)
+  const [editingMedication, setEditingMedication] = useState<Medication | null>(null)
+  const [savingMedication, setSavingMedication] = useState(false)
   const [newMedication, setNewMedication] = useState({
+    medicationName: '',
+    dosage: '',
+    frequency: '',
+    timeOfDay: '',
+    instructions: '',
+    prescribedBy: '',
+    startDate: '',
+    endDate: ''
+  })
+
+  const [editMedication, setEditMedication] = useState({
     medicationName: '',
     dosage: '',
     frequency: '',
@@ -286,6 +300,102 @@ const Medications = () => {
         description: "Failed to save medication reminder",
         variant: "destructive"
       })
+    }
+  }
+
+  const openEditMedication = (medication: Medication) => {
+    setEditingMedication(medication)
+    setEditMedication({
+      medicationName: medication.medication_name || medication.name || '',
+      dosage: medication.dosage || '',
+      frequency: medication.frequency || '',
+      timeOfDay: medication.time_of_day || 'Morning',
+      instructions: medication.notes || '',
+      prescribedBy: '',
+      startDate: medication.start_date || '',
+      endDate: medication.end_date || ''
+    })
+    setIsEditMedicationOpen(true)
+  }
+
+  const handleUpdateMedication = async () => {
+    if (!selectedPatient || !editingMedication) {
+      toast({
+        title: 'Error',
+        description: 'Please select a medication to edit',
+        variant: 'destructive'
+      })
+      return
+    }
+
+    setSavingMedication(true)
+
+    try {
+      const nextNotes = [
+        editMedication.instructions,
+        editMedication.prescribedBy ? `Prescribed by ${editMedication.prescribedBy}` : ''
+      ].filter(Boolean).join(' | ')
+
+      await updateMedication(editingMedication.medication_id, {
+        patient_id: selectedPatient,
+        name: editMedication.medicationName,
+        medication_name: editMedication.medicationName,
+        dosage: editMedication.dosage,
+        frequency: editMedication.frequency,
+        time_of_day: (editMedication.timeOfDay || 'Morning') as Medication['time_of_day'],
+        start_date: editMedication.startDate,
+        end_date: editMedication.endDate || undefined,
+        notes: nextNotes,
+        is_active: editingMedication.is_active,
+        updated_at: new Date().toISOString()
+      })
+
+      const linkedReminders = (await getReminders()).filter(
+        reminder => reminder.medication_id === editingMedication.medication_id
+      )
+
+      await Promise.all(linkedReminders.map(reminder => updateReminder(reminder.reminder_id, {
+        title: editMedication.medicationName,
+        description: [
+          `Dosage: ${editMedication.dosage || 'N/A'}`,
+          `Frequency: ${editMedication.frequency || 'N/A'}`,
+          `Time: ${editMedication.timeOfDay || 'Morning'}`,
+          editMedication.instructions ? `Instructions: ${editMedication.instructions}` : '',
+          editMedication.prescribedBy ? `Prescribed by ${editMedication.prescribedBy}` : ''
+        ].filter(Boolean).join(' | '),
+        is_active: editingMedication.is_active
+      })))
+
+      await loadPatients()
+
+      if (selectedPatient) {
+        const selectedPatientRecord = patients.find(patient => patient.patient_id === selectedPatient)
+        if (selectedPatientRecord) {
+          const medications = await getMedicationsByPatient(
+            [selectedPatientRecord.patient_id, selectedPatientRecord.user_id || ''],
+            selectedPatientRecord.email,
+            `${selectedPatientRecord.first_name || ''} ${selectedPatientRecord.last_name || ''}`.trim()
+          )
+          setCurrentPatientMedications(medications.filter(activeMedication => activeMedication.is_active))
+        }
+      }
+
+      setIsEditMedicationOpen(false)
+      setEditingMedication(null)
+
+      toast({
+        title: 'Success',
+        description: 'Medication schedule updated successfully'
+      })
+    } catch (error) {
+      console.error('Error updating medication schedule:', error)
+      toast({
+        title: 'Error',
+        description: 'Failed to update medication schedule',
+        variant: 'destructive'
+      })
+    } finally {
+      setSavingMedication(false)
     }
   }
 
@@ -534,6 +644,118 @@ const Medications = () => {
               </div>
             </DialogContent>
           </Dialog>
+
+          <Dialog open={isEditMedicationOpen} onOpenChange={setIsEditMedicationOpen}>
+            <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Edit Medication Reminder</DialogTitle>
+                <DialogDescription>
+                  Update the medication schedule for {patient?.first_name} {patient?.last_name}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-6 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-medication-name">Medication Name *</Label>
+                    <Input
+                      id="edit-medication-name"
+                      value={editMedication.medicationName}
+                      onChange={(e) => setEditMedication({...editMedication, medicationName: e.target.value})}
+                      placeholder="e.g., Metformin"
+                      required
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-dosage">Dosage *</Label>
+                    <Input
+                      id="edit-dosage"
+                      value={editMedication.dosage}
+                      onChange={(e) => setEditMedication({...editMedication, dosage: e.target.value})}
+                      placeholder="e.g., 500mg"
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-frequency">Frequency *</Label>
+                    <Select value={editMedication.frequency} onValueChange={(value) => setEditMedication({...editMedication, frequency: value})}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select frequency" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="once-daily">Once daily</SelectItem>
+                        <SelectItem value="twice-daily">Twice daily</SelectItem>
+                        <SelectItem value="three-times-daily">Three times daily</SelectItem>
+                        <SelectItem value="as-needed">As needed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-time-of-day">Time of Day *</Label>
+                    <Select value={editMedication.timeOfDay} onValueChange={(value) => setEditMedication({...editMedication, timeOfDay: value})}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select time" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Morning">Morning</SelectItem>
+                        <SelectItem value="Afternoon">Afternoon</SelectItem>
+                        <SelectItem value="Evening">Evening</SelectItem>
+                        <SelectItem value="Night">Night</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-start-date">Start Date</Label>
+                    <Input
+                      id="edit-start-date"
+                      type="date"
+                      value={editMedication.startDate}
+                      onChange={(e) => setEditMedication({...editMedication, startDate: e.target.value})}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-end-date">End Date</Label>
+                    <Input
+                      id="edit-end-date"
+                      type="date"
+                      value={editMedication.endDate}
+                      onChange={(e) => setEditMedication({...editMedication, endDate: e.target.value})}
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-prescribed-by">Prescribed By</Label>
+                  <Input
+                    id="edit-prescribed-by"
+                    value={editMedication.prescribedBy}
+                    onChange={(e) => setEditMedication({...editMedication, prescribedBy: e.target.value})}
+                    placeholder="e.g., Dr. Smith"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-instructions">Special Instructions</Label>
+                  <Textarea
+                    id="edit-instructions"
+                    value={editMedication.instructions}
+                    onChange={(e) => setEditMedication({...editMedication, instructions: e.target.value})}
+                    placeholder="Special instructions..."
+                    rows={3}
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-6">
+                <Button variant="outline" onClick={() => setIsEditMedicationOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleUpdateMedication} disabled={savingMedication}>
+                  {savingMedication ? 'Saving...' : 'Update Medication'}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* Patient Info Stats */}
@@ -671,7 +893,7 @@ const Medications = () => {
                         <CheckCircle className="h-3.5 w-3.5" />
                         Mark Taken
                       </Button>
-                      <Button variant="ghost" size="sm" title="Edit Medication" className="h-8 w-8 p-0">
+                      <Button variant="ghost" size="sm" title="Edit Medication" className="h-8 w-8 p-0" onClick={() => openEditMedication(medication)}>
                         <Edit className="h-3.5 w-3.5" />
                       </Button>
                       <Button

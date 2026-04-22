@@ -39,6 +39,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Patient, MedicalHistory } from "@/types"
 import { getPatients } from "@/services/firebase/patients"
 import { getMedicalHistoryByPatient, getMedicalHistories, addMedicalHistoryWithAttachments, updateMedicalHistory, deleteMedicalHistoryWithAttachments } from "@/services/firebase/medicalHistory"
+import { getFileInfoFromURL } from "@/services/firebase/storage"
 
 const MedicalRecords = () => {
   const [patients, setPatients] = useState<Patient[]>([])
@@ -206,6 +207,10 @@ const MedicalRecords = () => {
   // Handler to close medical record view
   const closeViewMedicalRecord = () => {
     setViewingMedicalRecord(null)
+  }
+
+  const openAttachment = (url: string) => {
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   // Handler to edit medical history record
@@ -893,7 +898,7 @@ const MedicalRecords = () => {
       
       {/* View Medical Record Dialog */}
       <Dialog open={!!viewingMedicalRecord} onOpenChange={closeViewMedicalRecord}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>Medical Record Details</DialogTitle>
             <DialogDescription>
@@ -902,7 +907,7 @@ const MedicalRecords = () => {
           </DialogHeader>
           {viewingMedicalRecord && (
             <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Condition</Label>
                   <p className="text-sm font-semibold">{viewingMedicalRecord.condition}</p>
@@ -921,7 +926,7 @@ const MedicalRecords = () => {
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Severity</Label>
                   <Badge className={getSeverityColor(viewingMedicalRecord.severity || '')}>
@@ -973,7 +978,76 @@ const MedicalRecords = () => {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4 pt-4 border-t">
+              {Array.isArray(viewingMedicalRecord.attachments) && viewingMedicalRecord.attachments.length > 0 && (
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Attachment{viewingMedicalRecord.attachments.length > 1 ? 's' : ''}</Label>
+                  <div className="mt-2 space-y-3">
+                    {viewingMedicalRecord.attachments.map((url: string) => {
+                      const fileInfo = getFileInfoFromURL(url)
+
+                      if (fileInfo.isImage) {
+                        return (
+                          <button
+                            key={url}
+                            type="button"
+                            onClick={() => openAttachment(url)}
+                            className="group block w-full max-w-full overflow-hidden rounded-lg border bg-background text-left"
+                            title={`Open ${fileInfo.fileName}`}
+                          >
+                            <div className="relative flex w-full max-w-full justify-center bg-muted/40 p-3">
+                              <img
+                                src={url}
+                                alt={fileInfo.fileName}
+                                className="max-h-[420px] w-auto max-w-full rounded-md object-contain bg-white"
+                                loading="lazy"
+                              />
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/10">
+                                <span className="rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
+                                  Click to view full size
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 border-t px-3 py-2">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium">{fileInfo.fileName}</p>
+                                <p className="text-xs text-muted-foreground">Image preview</p>
+                              </div>
+                              <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            </div>
+                          </button>
+                        )
+                      }
+
+                      return (
+                        <div key={url} className="flex w-full max-w-full items-center justify-between gap-3 rounded-lg border bg-background p-3">
+                          <div className="flex min-w-0 flex-1 items-center gap-3">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-muted">
+                              <FileText className="h-5 w-5 text-muted-foreground" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">{fileInfo.fileName}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {fileInfo.fileExtension.toUpperCase() || 'FILE'}
+                              </p>
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openAttachment(url)}
+                            className="shrink-0"
+                          >
+                            Open File
+                          </Button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid gap-4 border-t pt-4 md:grid-cols-2">
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Created</Label>
                   <p className="text-sm">{formatDate(viewingMedicalRecord.created_at)}</p>

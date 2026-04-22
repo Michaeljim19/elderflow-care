@@ -28,6 +28,21 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  const role = String(userData?.role || '').toLowerCase();
+
+  if (role && role !== 'admin') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background px-4">
+        <div className="text-center space-y-4 max-w-md">
+          <h1 className="text-2xl font-bold text-destructive">Access Denied</h1>
+          <p className="text-muted-foreground">
+            Only admin accounts can access this website.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (userData && userData.isActive === false) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background px-4">

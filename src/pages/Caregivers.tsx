@@ -15,8 +15,6 @@ import {
   Download,    // Add Download import
   ExternalLink, // Add ExternalLink import
   Calendar,     // Add Calendar import
-  Info,        // Add Info import
-  ChevronDown,  // Add ChevronDown import
   RefreshCw     // Add RefreshCw import
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -298,6 +296,63 @@ const Caregivers = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [uploadProgress, setUploadProgress] = useState<number>(0)
 
+  const emptyAddress = {
+    province: "",
+    city_municipality: "",
+    barangay: "",
+    street: ""
+  }
+
+  const normalizePhilippineContactNumber = (value: string) => {
+    const digits = value.replace(/\D/g, '')
+
+    if (digits.startsWith('63') && digits.length === 12) {
+      return `0${digits.slice(2)}`
+    }
+
+    if (digits.startsWith('9') && digits.length === 10) {
+      return `0${digits}`
+    }
+
+    return digits
+  }
+
+  const isValidPhilippineContactNumber = (value: string) => /^09\d{9}$/.test(value)
+
+  const normalizeAddressForEdit = (address: Caregiver['address']) => {
+    if (!address || typeof address === 'string') {
+      if (typeof address === 'string' && address.trim()) {
+        try {
+          const parsedAddress = JSON.parse(address)
+          if (parsedAddress && typeof parsedAddress === 'object') {
+            return {
+              province: parsedAddress.province || "",
+              city_municipality: parsedAddress.city_municipality || "",
+              barangay: parsedAddress.barangay || "",
+              street: parsedAddress.street || ""
+            }
+          }
+        } catch {
+          // Fall through to preserve the raw string as the street value.
+        }
+
+        return {
+          ...emptyAddress,
+          street: address
+        }
+      }
+
+      return { ...emptyAddress }
+    }
+
+    return {
+      province: address.province || "",
+      city_municipality: address.city_municipality || "",
+      barangay: address.barangay || "",
+      street: address.street || ""
+    }
+  }
+
   // Helper function to check caregiver availability
   const checkCaregiverAvailability = async (caregivers: Caregiver[]) => {
     try {
@@ -519,10 +574,21 @@ const Caregivers = () => {
   }
 
   const handleAddCaregiver = async () => {
+    const normalizedContactNumber = normalizePhilippineContactNumber(formData.contact_number)
+
     if (!formData.first_name || !formData.last_name || !formData.birthday || !formData.email || !formData.contact_number || !formData.shift_type || !formData.shift_start_date || !formData.address.province || !formData.address.city_municipality || !formData.address.barangay || !formData.address.street) {
       toast({
         title: "Validation Error",
         description: "Please fill in all required fields (marked with *).",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!isValidPhilippineContactNumber(normalizedContactNumber)) {
+      toast({
+        title: "Invalid Contact Number",
+        description: "Enter a valid Philippine mobile number like 09XXXXXXXXX or +639XXXXXXXXX.",
         variant: "destructive"
       })
       return
@@ -551,7 +617,7 @@ const Caregivers = () => {
         last_name: formData.last_name,
         birthday: formData.birthday,
         email: formData.email,
-        contact_number: parseInt(formData.contact_number),
+        contact_number: normalizedContactNumber,
         address: formData.address,
         shift_type: formData.shift_type as "Day" | "Night",
         shift_start_date: formData.shift_start_date ? dateToTimestamp(formData.shift_start_date) : undefined,
@@ -718,24 +784,19 @@ const Caregivers = () => {
     setEditingCaregiver(caregiver)
     // Pre-populate form with existing data
     setFormData({
-      first_name: caregiver.first_name,
+      first_name: caregiver.first_name || "",
       middle_name: caregiver.middle_name || "",
-      last_name: caregiver.last_name,
+      last_name: caregiver.last_name || "",
       birthday: caregiver.birthday || "",
-      email: caregiver.email,
-      contact_number: caregiver.contact_number.toString(),
-      address: caregiver.address || {
-        province: "",
-        city_municipality: "",
-        barangay: "",
-        street: ""
-      },
+      email: caregiver.email || "",
+      contact_number: caregiver.contact_number?.toString() || "",
+      address: normalizeAddressForEdit(caregiver.address),
       selectedProvinceCode: "",
       selectedCityCode: "",
       selectedBarangayCode: "",
-      shift_type: caregiver.shift_type,
-      shift_start_date: timestampToDate(caregiver.shift_start_date),
-      shift_end_date: timestampToDate(caregiver.shift_end_date),
+      shift_type: caregiver.shift_type || undefined,
+      shift_start_date: timestampToDate(caregiver.shift_start_date) || "",
+      shift_end_date: timestampToDate(caregiver.shift_end_date) || "",
       role: "Eldercare",
       assigned_patients_count: caregiver.assigned_patients_count || 0,
       max_patients: caregiver.max_patients || getMaxPatientsForShift(caregiver.shift_type),
@@ -744,75 +805,88 @@ const Caregivers = () => {
       contract_start_date: caregiver.contract_start_date || "", // Include contract start date
       contract_end_date: caregiver.contract_end_date || ""     // Include contract end date
     })
-
-    // Load address data if available
-    const loadAddressDataForEdit = async () => {
-      const caregiverAddress = caregiver.address;
-      if (caregiverAddress?.province) {
-        try {
-          // Find the province in the already loaded provinces array
-          const selectedProvince = provinces.find(p => 
-            p.code === caregiverAddress.province || p.name === caregiverAddress.province
-          );
-          
-          if (selectedProvince) {
-            // Update form data with province code
-            setFormData(prev => ({
-              ...prev,
-              selectedProvinceCode: selectedProvince.code
-            }));
-
-            // Load cities for the selected province
-            const citiesData = await addressService.getCitiesByProvince(selectedProvince.code);
-            setCities(citiesData);
-            
-            // If there's a city, find it and load barangays
-            if (caregiverAddress.city_municipality) {
-              const selectedCity = citiesData.find(c => 
-                c.code === caregiverAddress.city_municipality || c.name === caregiverAddress.city_municipality
-              );
-              
-              if (selectedCity) {
-                // Update form data with city code
-                setFormData(prev => ({
-                  ...prev,
-                  selectedCityCode: selectedCity.code
-                }));
-
-                // Load barangays for the selected city
-                const barangaysData = await addressService.getBarangaysByCity(selectedCity.code);
-                setBarangays(barangaysData);
-
-                // If there's a barangay, find it
-                if (caregiverAddress.barangay) {
-                  const selectedBarangay = barangaysData.find(b => 
-                    b.code === caregiverAddress.barangay || b.name === caregiverAddress.barangay
-                  );
-                  
-                  if (selectedBarangay) {
-                    setFormData(prev => ({
-                      ...prev,
-                      selectedBarangayCode: selectedBarangay.code
-                    }));
-                  }
-                }
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Error loading address data for editing:', error);
-          toast({
-            title: "Warning",
-            description: "Could not load address dropdown data for editing.",
-            variant: "destructive"
-          });
-        }
-      }
-    };
-
-    // Load address data after a short delay to ensure provinces are loaded
-    setTimeout(loadAddressDataForEdit, 100);
   }
+
+  useEffect(() => {
+    if (!editingCaregiver || provinces.length === 0) {
+      return
+    }
+
+    const caregiverAddress = normalizeAddressForEdit(editingCaregiver.address)
+    if (!caregiverAddress.province) {
+      return
+    }
+
+    let isCancelled = false
+
+    const hydrateAddressSelection = async () => {
+      try {
+        const selectedProvince = provinces.find(province => 
+          province.code === caregiverAddress.province || province.name === caregiverAddress.province
+        )
+
+        if (!selectedProvince || isCancelled) {
+          return
+        }
+
+        setFormData(prev => ({
+          ...prev,
+          selectedProvinceCode: selectedProvince.code
+        }))
+
+        const citiesData = await addressService.getCitiesByProvince(selectedProvince.code)
+        if (isCancelled) {
+          return
+        }
+
+        setCities(citiesData)
+
+        const selectedCity = citiesData.find(city => 
+          city.code === caregiverAddress.city_municipality || city.name === caregiverAddress.city_municipality
+        )
+
+        if (!selectedCity || isCancelled) {
+          return
+        }
+
+        setFormData(prev => ({
+          ...prev,
+          selectedCityCode: selectedCity.code
+        }))
+
+        const barangaysData = await addressService.getBarangaysByCity(selectedCity.code)
+        if (isCancelled) {
+          return
+        }
+
+        setBarangays(barangaysData)
+
+        const selectedBarangay = barangaysData.find(barangay => 
+          barangay.code === caregiverAddress.barangay || barangay.name === caregiverAddress.barangay
+        )
+
+        if (selectedBarangay && !isCancelled) {
+          setFormData(prev => ({
+            ...prev,
+            selectedBarangayCode: selectedBarangay.code
+          }))
+        }
+      } catch (error) {
+        console.error('Error loading address data for editing:', error)
+        toast({
+          title: "Warning",
+          description: "Could not load address dropdown data for editing.",
+          variant: "destructive"
+        })
+      }
+    }
+
+    void hydrateAddressSelection()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [editingCaregiver?.caregiver_id, editingCaregiver?.address, provinces, toast])
 
   // Auto-update caregiver status based on shift dates
   const updateCaregiverStatusByDates = async () => {
@@ -826,7 +900,7 @@ const Caregivers = () => {
       let updated = 0
       
       for (const caregiver of allCaregivers) {
-        let shouldBeActive = false
+        let expectedStatus: 'pending' | 'Active' | 'Inactive' | 'On Leave' = 'pending'
         
         // Check if caregiver has shift dates
         if (caregiver.shift_start_date && caregiver.shift_end_date) {
@@ -834,18 +908,17 @@ const Caregivers = () => {
           const endDate = new Date(timestampToDate(caregiver.shift_end_date))
           
           // Caregiver should be active if today is between start and end dates (inclusive)
-          shouldBeActive = today >= startDate && today <= endDate
+          expectedStatus = today >= startDate && today <= endDate ? 'Active' : 'Inactive'
         } else if (caregiver.shift_start_date) {
           // If only start date is set, active from start date onwards
           const startDate = new Date(timestampToDate(caregiver.shift_start_date))
-          shouldBeActive = today >= startDate
+          expectedStatus = today >= startDate ? 'Active' : 'Inactive'
         } else {
-          // If no shift dates, consider active by default (backwards compatibility)
-          shouldBeActive = true
+          // If no shift dates, treat the caregiver as pending until contract details exist
+          expectedStatus = 'pending'
         }
         
-        const currentStatus = caregiver.status || 'Inactive'
-        const expectedStatus = shouldBeActive ? 'Active' : 'Inactive'
+        const currentStatus = caregiver.status || 'pending'
         
         // Update if status doesn't match what it should be
         if (currentStatus !== expectedStatus) {
@@ -1305,11 +1378,22 @@ const Caregivers = () => {
 
   const handleUpdate = async () => {
     if (!editingCaregiver) return
+
+    const normalizedContactNumber = normalizePhilippineContactNumber(formData.contact_number)
     
     if (!formData.first_name || !formData.last_name || !formData.birthday || !formData.email || !formData.contact_number || !formData.shift_type || !formData.shift_start_date || !formData.address.province || !formData.address.city_municipality || !formData.address.barangay || !formData.address.street) {
       toast({
         title: "Validation Error",
         description: "Please fill in all required fields (marked with *).",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (!isValidPhilippineContactNumber(normalizedContactNumber)) {
+      toast({
+        title: "Invalid Contact Number",
+        description: "Enter a valid Philippine mobile number like 09XXXXXXXXX or +639XXXXXXXXX.",
         variant: "destructive"
       })
       return
@@ -1338,6 +1422,12 @@ const Caregivers = () => {
       
       // Store original shift type for comparison
       const originalShiftType = editingCaregiver.shift_type
+      const addressValue = {
+        province: formData.address?.province || "",
+        city_municipality: formData.address?.city_municipality || "",
+        barangay: formData.address?.barangay || "",
+        street: formData.address?.street || ""
+      }
       
       // Debug logging for form data
       console.log('🔍 Edit caregiver form data:', {
@@ -1353,8 +1443,8 @@ const Caregivers = () => {
         last_name: formData.last_name,
         birthday: formData.birthday,
         email: formData.email,
-        contact_number: parseInt(formData.contact_number),
-        address: formData.address,
+        contact_number: normalizedContactNumber,
+        address: addressValue,
         shift_type: formData.shift_type as "Day" | "Night",
         shift_start_date: formData.shift_start_date ? dateToTimestamp(formData.shift_start_date) : editingCaregiver.shift_start_date,
         shift_end_date: formData.shift_end_date ? dateToTimestamp(formData.shift_end_date) : editingCaregiver.shift_end_date,
@@ -1565,8 +1655,32 @@ const Caregivers = () => {
     }
   }
 
-  const getAvailabilityBadge = (caregiverId: string) => {
-    const status = caregiverAvailability[caregiverId] || 'loading'
+  const hasCaregiverAvailabilityRequirements = (caregiver: Caregiver) => {
+    return Boolean(caregiver.license_number || caregiver.license_picture) && Boolean(caregiver.contract_start_date && caregiver.contract_end_date)
+  }
+
+  const getAvailabilityBadge = (caregiver: Caregiver) => {
+    if (!hasCaregiverAvailabilityRequirements(caregiver)) {
+      const reasons = []
+
+      if (!caregiver.license_number && !caregiver.license_picture) {
+        reasons.push('No License')
+      }
+
+      if (!(caregiver.contract_start_date && caregiver.contract_end_date)) {
+        reasons.push('No Contract')
+      }
+
+      return (
+        <Badge variant="outline" className="text-red-600 border-red-600 gap-1">
+          <div className="w-2 h-2 bg-red-600 rounded-full" />
+          Unavailable
+          <span className="text-xs font-normal">({reasons.join(' / ')})</span>
+        </Badge>
+      )
+    }
+
+    const status = caregiverAvailability[caregiver.caregiver_id] || 'loading'
     
     switch(status) {
       case 'available':
@@ -1703,7 +1817,10 @@ const Caregivers = () => {
                   <Label htmlFor="phone">Contact Number *</Label>
                   <Input 
                     id="phone" 
-                    placeholder="Enter contact number"
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                    placeholder="09XXXXXXXXX or +639XXXXXXXXX"
                     value={formData.contact_number}
                     onChange={(e) => handleInputChange("contact_number", e.target.value)}
                   />
@@ -1724,7 +1841,7 @@ const Caregivers = () => {
                           <SelectValue placeholder={loadingAddressData ? "Loading provinces..." : "Select province"} />
                         </SelectTrigger>
                         <SelectContent>
-                          {provinces.filter(province => province.code && province.code.trim() !== '').map((province) => (
+                          {provinces.filter(province => province.code && province.code.trim() !== '' && province.name !== 'Pampanga').map((province) => (
                             <SelectItem key={province.code} value={province.code}>
                               {province.name}
                             </SelectItem>
@@ -2001,7 +2118,10 @@ const Caregivers = () => {
                   <Label htmlFor="editPhone">Contact Number *</Label>
                   <Input 
                     id="editPhone" 
-                    placeholder="Enter contact number"
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                    placeholder="09XXXXXXXXX or +639XXXXXXXXX"
                     value={formData.contact_number}
                     onChange={(e) => handleInputChange("contact_number", e.target.value)}
                   />
@@ -2282,18 +2402,6 @@ const Caregivers = () => {
                                          viewingCaregiver.birthdate || 
                                          (viewingCaregiver as any).date_of_birth;
                           
-                          // Debug: Log available birthday fields
-                          console.log(`🎂 Birthday Debug for ${viewingCaregiver.first_name}:`, {
-                            birthday: viewingCaregiver.birthday,
-                            birthdate: viewingCaregiver.birthdate,
-                            date_of_birth: (viewingCaregiver as any).date_of_birth,
-                            finalValue: birthday,
-                            caregiverKeys: Object.keys(viewingCaregiver).filter(key => 
-                              key.toLowerCase().includes('birth') || 
-                              key.toLowerCase().includes('date')
-                            )
-                          });
-                          
                           if (!birthday) return "Not provided";
                           
                           try {
@@ -2309,13 +2417,6 @@ const Caregivers = () => {
                           }
                         })()}
                       </p>
-                      {/* Temporary debug display */}
-                      {process.env.NODE_ENV === 'development' && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Debug: birthday={viewingCaregiver.birthday || 'null'}, 
-                          birthdate={viewingCaregiver.birthdate || 'null'}
-                        </p>
-                      )}
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -2340,21 +2441,6 @@ const Caregivers = () => {
                     <p className="text-sm">{formatAddress(viewingCaregiver.address)}</p>
                   </div>
 
-                  {/* System Information */}
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">System Information</Label>
-                    <div className="grid grid-cols-2 gap-4 mt-2">
-                      <div>
-                        <Label className="text-xs text-muted-foreground">Caregiver ID</Label>
-                        <p className="text-xs font-mono bg-muted text-muted-foreground p-1 rounded border border-border">{viewingCaregiver.caregiver_id || "Not available"}</p>
-                      </div>
-                      <div>
-                        <Label className="text-xs text-muted-foreground">User ID</Label>
-                        <p className="text-xs font-mono bg-muted text-muted-foreground p-1 rounded border border-border">{viewingCaregiver.user_id || "Not linked"}</p>
-                      </div>
-                    </div>
-                  </div>
-
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Shift Type</Label>
@@ -2376,14 +2462,11 @@ const Caregivers = () => {
                     </div>
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Availability</Label>
-                      {canCaregiverTakeMorePatients(viewingCaregiver) ? (
-                        <Badge variant="outline" className="text-green-600 border-green-600">
+                      {getAvailabilityBadge(viewingCaregiver)}
+                      {hasCaregiverAvailabilityRequirements(viewingCaregiver) && canCaregiverTakeMorePatients(viewingCaregiver) && (
+                        <p className="text-xs text-muted-foreground mt-1">
                           Available ({getAvailablePatientSlots(viewingCaregiver)} slots)
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-red-600 border-red-600">
-                          Full Capacity
-                        </Badge>
+                        </p>
                       )}
                     </div>
                   </div>
@@ -2578,6 +2661,16 @@ const Caregivers = () => {
                         </div>
                       </div>
                     )}
+                    {!viewingCaregiver.contract_start_date && !viewingCaregiver.contract_end_date && (
+                      <div className="mt-2">
+                        <Label className="text-sm font-medium text-muted-foreground">Contract Status</Label>
+                        <div className="mt-1">
+                          <Badge variant="outline" className="text-amber-600 border-amber-600">
+                            Pending
+                          </Badge>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   
                   {/* Assigned Patients Section */}
@@ -2724,92 +2817,6 @@ const Caregivers = () => {
                     )}
                   </div>
 
-                  {/* System Debugging Information */}
-                  <div className="mt-6 border-t pt-4">
-                    <details className="group">
-                      <summary className="cursor-pointer list-none">
-                        <div className="flex items-center justify-between p-2 rounded border hover:bg-muted/50">
-                          <div className="flex items-center gap-2">
-                            <Info className="h-4 w-4 text-muted-foreground" />
-                            <Label className="text-sm font-medium cursor-pointer">System Information & Debugging</Label>
-                          </div>
-                          <ChevronDown className="h-4 w-4 text-muted-foreground group-open:rotate-180 transition-transform" />
-                        </div>
-                      </summary>
-                      <div className="mt-3 space-y-4 p-3 bg-muted/20 rounded border">
-                        {/* Data Completeness Status */}
-                        <div>
-                          <Label className="text-xs font-medium text-muted-foreground">Data Completeness Status</Label>
-                          <div className="flex flex-wrap gap-2 mt-1">
-                            <Badge variant={viewingCaregiver.first_name ? "default" : "secondary"} className="text-xs">
-                              {viewingCaregiver.first_name ? "✓" : "✗"} Name
-                            </Badge>
-                            <Badge variant={viewingCaregiver.email ? "default" : "secondary"} className="text-xs">
-                              {viewingCaregiver.email ? "✓" : "✗"} Email
-                            </Badge>
-                            <Badge variant={viewingCaregiver.contact_number ? "default" : "secondary"} className="text-xs">
-                              {viewingCaregiver.contact_number ? "✓" : "✗"} Contact
-                            </Badge>
-                            <Badge variant={viewingCaregiver.address ? "default" : "secondary"} className="text-xs">
-                              {viewingCaregiver.address ? "✓" : "✗"} Address
-                            </Badge>
-                            <Badge variant={viewingCaregiver.shift_type ? "default" : "secondary"} className="text-xs">
-                              {viewingCaregiver.shift_type ? "✓" : "✗"} Shift
-                            </Badge>
-                            <Badge variant={viewingCaregiver.license_number ? "default" : "secondary"} className="text-xs">
-                              {viewingCaregiver.license_number ? "✓" : "✗"} License
-                            </Badge>
-                          </div>
-                        </div>
-
-                        {/* Entity Linking Status */}
-                        <div>
-                          <Label className="text-xs font-medium text-muted-foreground">Entity Linking Status</Label>
-                          <div className="flex flex-wrap gap-2 mt-1">
-                            <Badge variant={viewingCaregiver.user_id ? "default" : "secondary"} className="text-xs">
-                              {viewingCaregiver.user_id ? "✓ Users Entity Linked" : "✗ No Users Link"}
-                            </Badge>
-                            <Badge variant={viewingCaregiver.caregiver_id ? "default" : "secondary"} className="text-xs">
-                              {viewingCaregiver.caregiver_id ? "✓ Caregiver Entity" : "✗ No Caregiver ID"}
-                            </Badge>
-                          </div>
-                        </div>
-
-                        {/* Raw Data View */}
-                        <div>
-                          <Label className="text-xs font-medium text-muted-foreground">Raw Data (JSON)</Label>
-                          <pre className="text-xs bg-gray-50 dark:bg-gray-900 p-2 rounded border mt-1 overflow-auto max-h-40 whitespace-pre-wrap">
-                            {JSON.stringify(viewingCaregiver, null, 2)}
-                          </pre>
-                        </div>
-
-                        {/* Data Source Information */}
-                        <div>
-                          <Label className="text-xs font-medium text-muted-foreground">Data Source Verification</Label>
-                          <div className="grid grid-cols-2 gap-3 mt-1 text-xs">
-                            <div>
-                              <Label className="text-xs text-muted-foreground">From Users Entity:</Label>
-                              <p className="text-xs">• Name: {viewingCaregiver.first_name ? "✓" : "✗"}</p>
-                              <p className="text-xs">• Contact: {viewingCaregiver.contact_number ? "✓" : "✗"}</p>
-                              <p className="text-xs">• Address: {viewingCaregiver.address ? "✓" : "✗"} 
-                                {viewingCaregiver.address && (
-                                  <span className="text-muted-foreground">
-                                    ({typeof viewingCaregiver.address === 'string' ? 'JSON string' : 'object'})
-                                  </span>
-                                )}
-                              </p>
-                            </div>
-                            <div>
-                              <Label className="text-xs text-muted-foreground">From Caregivers Entity:</Label>
-                              <p className="text-xs">• Shift Type: {viewingCaregiver.shift_type ? "✓" : "✗"}</p>
-                              <p className="text-xs">• License: {viewingCaregiver.license_number ? "✓" : "✗"}</p>
-                              <p className="text-xs">• Capacity: {viewingCaregiver.max_patients ? "✓" : "✗"}</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </details>
-                  </div>
                 </div>
               )}
               <div className="flex justify-end">
@@ -2932,11 +2939,9 @@ const Caregivers = () => {
                     <TableHead className="min-w-[120px]">Unique ID</TableHead>
                     <TableHead className="min-w-[200px]">Eldercare</TableHead>
                     <TableHead className="min-w-[150px]">Contact</TableHead>
-                    <TableHead className="min-w-[200px]">Address</TableHead>
                     <TableHead className="min-w-[120px]">Shift</TableHead>
                     <TableHead className="min-w-[120px]">Availability</TableHead>
                     <TableHead className="min-w-[100px]">Patients</TableHead>
-                    <TableHead className="min-w-[120px]">License</TableHead>
                     <TableHead className="min-w-[120px]">Contract</TableHead>
                     <TableHead className="min-w-[100px]">Actions</TableHead>
                   </TableRow>
@@ -2976,14 +2981,6 @@ const Caregivers = () => {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-start gap-1 text-sm">
-                          <MapPin className="h-3 w-3 text-muted-foreground mt-0.5 flex-shrink-0" />
-                          <span className="line-clamp-2 text-xs">
-                            {formatAddress(caregiver.address)}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
                         <Badge className={getShiftColor(caregiver.shift_type)}>
                           {caregiver.shift_type}
                         </Badge>
@@ -2993,8 +2990,8 @@ const Caregivers = () => {
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1">
-                          {getAvailabilityBadge(caregiver.caregiver_id)}
-                          {canCaregiverTakeMorePatients(caregiver) ? (
+                          {getAvailabilityBadge(caregiver)}
+                          {hasCaregiverAvailabilityRequirements(caregiver) && canCaregiverTakeMorePatients(caregiver) ? (
                             <div className="text-xs text-green-600">
                               Available ({getAvailablePatientSlots(caregiver)} slots)
                             </div>
@@ -3014,58 +3011,46 @@ const Caregivers = () => {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {caregiver.license_picture ? (
-                          <Badge variant="outline" className="text-green-600 border-green-600 gap-1">
-                            <FileText className="h-3 w-3" />
-                            Licensed
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-amber-600 border-amber-600">
-                            No License
-                          </Badge>
-                        )}
-                        {caregiver.license_number && (
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {caregiver.license_number}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
                         {caregiver.contract_start_date && caregiver.contract_end_date ? (
-                          (() => {
-                            const today = new Date();
-                            const endDate = new Date(caregiver.contract_end_date);
-                            const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                            
-                            if (daysUntilExpiry < 0) {
+                          <div className="text-xs space-y-1">
+                            <div>
+                              <span className="font-medium">Start:</span> {new Date(caregiver.contract_start_date).toLocaleDateString()}
+                            </div>
+                            <div>
+                              <span className="font-medium">End:</span> {new Date(caregiver.contract_end_date).toLocaleDateString()}
+                            </div>
+                            {(() => {
+                              const now = new Date()
+                              const startDate = new Date(caregiver.contract_start_date)
+                              const endDate = new Date(caregiver.contract_end_date)
+
+                              if (now < startDate) {
+                                return (
+                                  <Badge variant="outline" className="text-blue-600 border-blue-600">
+                                    Upcoming
+                                  </Badge>
+                                )
+                              }
+
+                              if (now > endDate) {
+                                return (
+                                  <Badge variant="outline" className="text-red-600 border-red-600">
+                                    Expired
+                                  </Badge>
+                                )
+                              }
+
                               return (
-                                <Badge variant="outline" className="text-red-600 border-red-600">
-                                  Expired
+                                <Badge variant="outline" className="text-green-600 border-green-600">
+                                  Active
                                 </Badge>
-                              );
-                            } else if (daysUntilExpiry <= 30) {
-                              return (
-                                <Badge variant="outline" className="text-amber-600 border-amber-600">
-                                  Expiring ({daysUntilExpiry}d)
-                                </Badge>
-                              );
-                            } else {
-                              return (
-                                <Badge variant="outline" className="text-blue-600 border-blue-600">
-                                  Valid
-                                </Badge>
-                              );
-                            }
-                          })()
+                              )
+                            })()}
+                          </div>
                         ) : (
                           <Badge variant="outline" className="text-gray-600 border-gray-600">
-                            No Contract
+                            Pending
                           </Badge>
-                        )}
-                        {caregiver.contract_end_date && (
-                          <div className="text-xs text-muted-foreground mt-1">
-                            Until {new Date(caregiver.contract_end_date).toLocaleDateString()}
-                          </div>
                         )}
                       </TableCell>
                       <TableCell>
