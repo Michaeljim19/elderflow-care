@@ -58,9 +58,13 @@ export const createUser = async (userData: {
 }) => {
   try {
     console.log('Creating user document (no auth):', userData);
+
+    const documentId = doc(collection(db, 'users')).id;
     
     // Create user document in Firestore - ONLY core user data
     const coreUserData: any = {
+      uid: documentId,
+      user_id: documentId,
       first_name: userData.first_name,
       last_name: userData.last_name,
       email: userData.email || '',
@@ -76,17 +80,12 @@ export const createUser = async (userData: {
     if (userData.middle_name) coreUserData.middle_name = userData.middle_name;
     if (userData.birthday) coreUserData.birthday = userData.birthday;
     
-    // Save to users collection - let Firestore auto-generate document ID
-    const userDocRef = await addDoc(collection(db, 'users'), coreUserData);
-    const user_id = userDocRef.id; // Use Firestore document ID as user_id
-    
-    // Update the document to include the user_id field
-    await updateDoc(userDocRef, {
-      user_id: user_id
-    });
+    // Save to users collection using the generated document ID
+    const userDocRef = doc(db, 'users', documentId);
+    await setDoc(userDocRef, coreUserData);
     
     console.log('✅ Created user document:', {
-      user_id: user_id,
+      user_id: documentId,
       email: userData.email,
       role: userData.role
     });
@@ -94,9 +93,10 @@ export const createUser = async (userData: {
     invalidateUsersCache();
 
     return {
-      user_id: user_id,
+      user_id: documentId,
       email: userData.email || '',
-      documentId: user_id
+      documentId: documentId,
+      uid: documentId
     };
     
   } catch (error: any) {
@@ -124,6 +124,7 @@ export const createUserWithId = async (
     
     // Create user document in Firestore with specific ID - ONLY core user data
     const coreUserData: any = {
+      uid: documentId,
       user_id: documentId, // Set the user_id to match the document ID
       first_name: userData.first_name,
       last_name: userData.last_name,
@@ -161,6 +162,130 @@ export const createUserWithId = async (
   } catch (error: any) {
     console.error('Error creating user document with ID:', error);
     throw new Error(`Failed to create user document with ID: ${error.message}`);
+  }
+};
+
+const cleanupLegacyCaregiverDocsForAccount = async (caregiverData: any, canonicalUserId: string): Promise<void> => {
+  try {
+    const caregiversRef = collection(db, 'caregivers');
+    const candidateQueries = [
+      query(caregiversRef, where('email', '==', caregiverData.email)),
+      query(caregiversRef, where('first_name', '==', caregiverData.first_name), where('last_name', '==', caregiverData.last_name))
+    ];
+
+    const documentIdsToDelete = new Set<string>();
+
+    for (const candidateQuery of candidateQueries) {
+      const snapshot = await getDocs(candidateQuery);
+      snapshot.docs.forEach((caregiverDoc) => {
+        if (caregiverDoc.id !== canonicalUserId) {
+          documentIdsToDelete.add(caregiverDoc.id);
+        }
+      });
+    }
+
+    for (const documentId of documentIdsToDelete) {
+      await deleteDoc(doc(db, 'caregivers', documentId));
+      console.log(`🗑️ Removed legacy caregiver document: ${documentId}`);
+    }
+
+    if (documentIdsToDelete.size === 0) {
+      console.log(`ℹ️ No legacy caregiver documents found for ${caregiverData.email || canonicalUserId}`);
+    }
+  } catch (error) {
+    console.error('❌ Error cleaning up legacy caregiver documents:', error);
+    throw error;
+  }
+};
+
+const cleanupLegacyUserDocsForCaregiver = async (caregiverData: any, canonicalUserId: string): Promise<void> => {
+  try {
+    const usersRef = collection(db, 'users');
+    const documentIdsToDelete = new Set<string>();
+    const firstName = String(caregiverData.first_name || '').trim().toLowerCase();
+    const lastName = String(caregiverData.last_name || '').trim().toLowerCase();
+    const emailValue = String(caregiverData.email || caregiverData.generated_email || '').trim().toLowerCase();
+    const phoneValue = String(caregiverData.contact_number || caregiverData.phone || '').replace(/\D/g, '');
+    const birthdayValue = String(caregiverData.birthday || '').trim();
+    const licenseValue = String(caregiverData.license_number || '').trim().toLowerCase();
+    const addressValue = String(
+      typeof caregiverData.address === 'string'
+        ? caregiverData.address
+        : caregiverData.address
+          ? JSON.stringify(caregiverData.address)
+          : ''
+    ).trim().toLowerCase();
+
+    const snapshot = await getDocs(usersRef);
+
+    snapshot.docs.forEach((userDoc) => {
+      const data = userDoc.data() as any;
+      const docFirstName = String(data.first_name || '').trim().toLowerCase();
+      const docLastName = String(data.last_name || '').trim().toLowerCase();
+      const docEmail = String(data.email || '').trim().toLowerCase();
+      const docGeneratedEmail = String(data.generated_email || '').trim().toLowerCase();
+      const docCreatedFrom = String(data.createdFrom || '').trim().toLowerCase();
+      const docRole = String(data.role || '').trim().toLowerCase();
+      const docAuthUid = String(data.auth_uid || data.uid || data.user_id || '').trim();
+      const docPhone = String(data.contact_number || data.phone || '').replace(/\D/g, '');
+      const docBirthday = String(data.birthday || data.birthdate || data.date_of_birth || '').trim();
+      const docLicense = String(data.license_number || '').trim().toLowerCase();
+      const docAddress = String(
+        typeof data.address === 'string'
+          ? data.address
+          : data.address
+            ? JSON.stringify(data.address)
+            : ''
+      ).trim().toLowerCase();
+
+      const matchesName = firstName && lastName && docFirstName === firstName && docLastName === lastName;
+      const matchesEmail = emailValue && (docEmail === emailValue || docGeneratedEmail === emailValue);
+      const matchesPhone = phoneValue && docPhone === phoneValue;
+      const matchesBirthday = birthdayValue && docBirthday === birthdayValue;
+      const matchesLicense = licenseValue && docLicense === licenseValue;
+      const matchesAddress = addressValue && docAddress === addressValue;
+      const looksLikeLegacyCaregiver = docCreatedFrom === 'caregiver_signup' || docRole === 'caregiver' || String(data.user_lvl || '').trim().toLowerCase() === 'caregiver';
+
+      const legacyScore = [matchesName, matchesEmail, matchesPhone, matchesBirthday, matchesLicense, matchesAddress]
+        .filter(Boolean)
+        .length;
+
+      if (
+        userDoc.id !== canonicalUserId &&
+        (
+          docCreatedFrom === 'caregiver_signup' ||
+          looksLikeLegacyCaregiver ||
+          docAuthUid !== canonicalUserId
+        ) &&
+        (
+          docCreatedFrom === 'caregiver_signup' ||
+          legacyScore >= 3 ||
+          matchesEmail ||
+          docGeneratedEmail === emailValue
+        )
+      ) {
+        documentIdsToDelete.add(userDoc.id);
+      }
+
+      if (
+        userDoc.id !== canonicalUserId &&
+        (docCreatedFrom === 'caregiver_signup' || (looksLikeLegacyCaregiver && legacyScore >= 3))
+      ) {
+        documentIdsToDelete.add(userDoc.id);
+      }
+    });
+
+    for (const documentId of documentIdsToDelete) {
+      await deleteDoc(doc(db, 'users', documentId));
+      console.log(`🗑️ Removed legacy users document for caregiver: ${documentId}`);
+    }
+
+    if (documentIdsToDelete.size === 0) {
+      console.log(`ℹ️ No legacy users documents found for caregiver ${caregiverData.email || canonicalUserId}`);
+    }
+  } catch (error) {
+    console.error('❌ Error cleaning up legacy users documents for caregiver:', error);
+    throw error;
   }
 };
 
@@ -239,7 +364,41 @@ export const createCaregiverUserAccount = async (caregiverData: any) => {
     if (caregiverData.specialization) userData.specialization = caregiverData.specialization;
     
     // Save to users collection using the Auth UID as document ID
-    await addDoc(collection(db, 'users'), userData);
+    await setDoc(doc(db, 'users', user.uid), userData);
+
+    // Mirror the caregiver-specific document using the same Auth UID
+    await setDoc(doc(db, 'caregivers', user.uid), {
+      caregiver_id: user.uid,
+      user_id: user.uid,
+      uid: user.uid,
+      first_name: caregiverData.first_name,
+      middle_name: caregiverData.middle_name || '',
+      last_name: caregiverData.last_name,
+      email: user.email,
+      contact_number: caregiverData.contact_number || '',
+      address: caregiverData.address || '',
+      birthday: caregiverData.birthday || '',
+      shift_type: caregiverData.shift_type || '',
+      shift_start_date: caregiverData.shift_start_date || null,
+      shift_end_date: caregiverData.shift_end_date || null,
+      contract_start_date: caregiverData.contract_start_date || null,
+      contract_end_date: caregiverData.contract_end_date || null,
+      specialization: caregiverData.specialization || '',
+      role: 'caregiver',
+      user_lvl: 'caregiver',
+      status: caregiverData.status || 'Active',
+      assigned_patients_count: caregiverData.assigned_patients_count || 0,
+      max_patients: caregiverData.max_patients || getMaxPatientsForShift(caregiverData.shift_type),
+      license_number: caregiverData.license_number || '',
+      license_picture: caregiverData.license_picture || '',
+      created_at: Timestamp.now(),
+      updated_at: Timestamp.now(),
+      is_active: true,
+      auth_created: true
+    });
+
+    await cleanupLegacyUserDocsForCaregiver(caregiverData, user.uid);
+    await cleanupLegacyCaregiverDocsForAccount(caregiverData, user.uid);
     invalidateUsersCache();
     
     console.log('✅ Created caregiver user account:', {

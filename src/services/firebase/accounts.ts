@@ -224,6 +224,78 @@ const cleanupDuplicateUsers = async (accountId: string): Promise<void> => {
   }
 }
 
+const cleanupLegacyUserDocsForAccount = async (account: Account, canonicalUserId: string): Promise<void> => {
+  try {
+    const usersRef = collection(db, 'users')
+    const candidateQueries = [
+      query(usersRef, where('accountId', '==', account.id)),
+      query(usersRef, where('generated_email', '==', account.generated_email)),
+      query(usersRef, where('email', '==', account.generated_email)),
+      query(usersRef, where('email', '==', account.email))
+    ]
+
+    if (String(account.role || '').toLowerCase() === 'caregiver' && account.name) {
+      const nameParts = account.name.split(' ').filter(part => part.trim() !== '')
+      const first_name = nameParts[0] || ''
+      const last_name = nameParts.length > 1 ? nameParts[nameParts.length - 1] : ''
+
+      if (first_name && last_name) {
+        candidateQueries.push(
+          query(usersRef, where('role', '==', 'Caregiver'), where('first_name', '==', first_name), where('last_name', '==', last_name))
+        )
+      }
+    }
+
+    const documentIdsToDelete = new Set<string>()
+
+    for (const candidateQuery of candidateQueries) {
+      const snapshot = await getDocs(candidateQuery)
+      snapshot.docs.forEach((userDoc) => {
+        if (userDoc.id !== canonicalUserId) {
+          documentIdsToDelete.add(userDoc.id)
+        }
+      })
+    }
+
+    for (const documentId of documentIdsToDelete) {
+      await deleteDoc(doc(db, 'users', documentId))
+      console.log(`🗑️ Removed legacy user document: ${documentId}`)
+    }
+
+    if (documentIdsToDelete.size === 0) {
+      console.log(`ℹ️ No legacy user documents found for account ${account.id} beyond canonical ${canonicalUserId}`)
+    }
+  } catch (error) {
+    console.error('❌ Error cleaning up legacy user documents:', error)
+    throw error
+  }
+}
+
+const findExistingUserDocForAccount = async (account: Account) => {
+  const usersRef = collection(db, 'users')
+
+  const queries = [
+    query(usersRef, where('accountId', '==', account.id))
+  ]
+
+  if (account.role === 'caregiver') {
+    queries.push(
+      query(usersRef, where('generated_email', '==', account.generated_email)),
+      query(usersRef, where('email', '==', account.email)),
+      query(usersRef, where('email', '==', account.generated_email))
+    )
+  }
+
+  for (const candidateQuery of queries) {
+    const snapshot = await getDocs(candidateQuery)
+    if (!snapshot.empty) {
+      return snapshot.docs[0]
+    }
+  }
+
+  return null
+}
+
 // Create Firebase Auth user for verified and active accounts
 export const createFirebaseAuthUser = async (account: Account): Promise<string | null> => {
   try {
@@ -283,50 +355,62 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
       displayName: account.name
     })
     
-    // Find existing user record that has the matching accountId
+    // Find existing user record that has the matching accountId or caregiver email
     try {
-      const usersRef = collection(db, 'users')
-      const q = query(usersRef, where('accountId', '==', account.id))
-      const snapshot = await getDocs(q)
-      
-      if (!snapshot.empty) {
+      const existingUserDoc = await findExistingUserDocForAccount(account)
+
+      if (existingUserDoc) {
         // Get the existing user data
-        const existingUserDoc = snapshot.docs[0]
         const existingUserData = existingUserDoc.data()
         const canonicalUserId = existingUserDoc.id
         
         console.log(`Found existing user record: ${existingUserDoc.id}, moving to Firebase Auth UID: ${user.uid}`)
 
         if (isCaregiverAccount) {
-          // Keep the original caregiver/user document ID so the user table stays aligned with the caregiver record.
-          await setDoc(doc(db, 'users', canonicalUserId), {
+          // Move caregiver/user records to the Firebase Auth UID so every identifier matches.
+          await setDoc(doc(db, 'users', user.uid), {
             ...existingUserData,
             uid: user.uid,
             auth_uid: user.uid,
-            user_id: canonicalUserId,
+            user_id: user.uid,
+            is_active: true,
+            status: 'Active',
             auth_created: true,
             emailVerified: true,
             verified: true,
             updated_at: Timestamp.now()
           }, { merge: true })
 
-          await mirrorCaregiverRecord(existingUserData, account.name, canonicalUserId)
+          await mirrorCaregiverRecord(existingUserData, account.name, user.uid)
 
-          const caregiverRef = doc(db, 'caregivers', canonicalUserId)
+          const caregiverRef = doc(db, 'caregivers', user.uid)
           await setDoc(caregiverRef, {
-            caregiver_id: canonicalUserId,
-            user_id: canonicalUserId,
+            caregiver_id: user.uid,
+            user_id: user.uid,
+            uid: user.uid,
             auth_uid: user.uid,
+            is_active: true,
+            status: 'Active',
             updated_at: Timestamp.now()
           }, { merge: true })
 
-          console.log(`✅ Preserved caregiver/user document ID: ${canonicalUserId} (Firebase Auth UID stored separately as auth_uid)`)
+          if (canonicalUserId !== user.uid) {
+            await deleteDoc(doc(db, 'users', canonicalUserId))
+            const existingCaregiverDoc = await getDoc(doc(db, 'caregivers', canonicalUserId))
+            if (existingCaregiverDoc.exists()) {
+              await deleteDoc(existingCaregiverDoc.ref)
+            }
+          }
+
+          console.log(`✅ Moved caregiver/user document ID to Firebase Auth UID: ${user.uid}`)
         } else {
           // Create a new document with Firebase Auth UID as document ID
           await setDoc(doc(db, 'users', user.uid), {
             ...existingUserData,  // Keep all existing data
             uid: user.uid,        // Add Firebase Auth UID
             user_id: user.uid,    // Set user_id to match Firebase Auth UID for consistency
+            is_active: true,
+            status: 'active',
             auth_created: true,
             emailVerified: true,
             verified: true,
@@ -346,6 +430,8 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
           
           console.log(`✅ Moved user record from ${existingUserDoc.id} to ${user.uid} (Firebase Auth UID now matches document ID)`)
         }
+      } else if (isCaregiverAccount) {
+        throw new Error(`No existing caregiver user document found for account ${account.id}. Refusing to create a new one.`)
       } else {
         console.warn('⚠️ No existing user found with accountId:', account.id)
         // Fallback: create minimal user record with Firebase Auth UID as document ID
@@ -367,6 +453,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
           created_at: Timestamp.now(),
           updated_at: Timestamp.now(),
           is_active: true,
+          status: 'active',
           emailVerified: true,
           accountId: account.id,
           auth_created: true,
@@ -384,6 +471,11 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
       
     } catch (updateError) {
       console.error('Error updating existing user record:', updateError)
+
+      if (isCaregiverAccount) {
+        throw updateError
+      }
+
       // Fallback to original behavior if update fails
       const nameParts = account.name.split(' ').filter(part => part.trim() !== '')
       const first_name = nameParts[0] || ''
@@ -403,6 +495,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
         created_at: Timestamp.now(),
         updated_at: Timestamp.now(),
         is_active: true,
+        status: 'active',
         emailVerified: true,
         accountId: account.id,
         auth_created: true,
@@ -419,6 +512,8 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
     }
     
     console.log('Firebase Auth user created and linked successfully - document ID matches Firebase Auth UID:', user.uid)
+
+    await cleanupLegacyUserDocsForAccount(account, user.uid)
     
     // Clean up any duplicate user records (keep only the original user record)
     await cleanupDuplicateUsers(account.id)

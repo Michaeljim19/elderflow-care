@@ -231,6 +231,8 @@ const AccountVerification = () => {
             // Mark user doc as verified and clear token
             await fbUpdateDoc(fbDoc(db, 'users', userDoc.id), {
               verified: true,
+              is_active: true,
+              status: 'active',
               verification_token: ''
             })
 

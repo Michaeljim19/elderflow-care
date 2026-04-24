@@ -33,7 +33,10 @@ import {
 } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { Caregiver } from "@/types"
-import { getCaregivers, addCaregiver } from "@/services/firebase/caregivers"
+import { collection, getDocs, deleteDoc, doc } from "firebase/firestore"
+import { db } from "@/lib/firebase"
+import { getCaregivers } from "@/services/firebase/caregivers"
+import { createCaregiverUserAccount } from "@/services/firebase/users"
 
 const Caregivers = () => {
   const [caregivers, setCaregivers] = useState<Caregiver[]>([])
@@ -150,7 +153,37 @@ const Caregivers = () => {
         role: formData.role as "nurse" | "caregiver" | "admin" | "doctor" | "family"
       }
 
-      await addCaregiver(newCaregiverData)
+      await createCaregiverUserAccount({
+        ...newCaregiverData,
+        status: 'Active',
+        assigned_patients_count: 0
+      })
+
+      // Hard cleanup for any stale legacy users docs created by the mobile register flow
+      const usersSnapshot = await getDocs(collection(db, 'users'))
+      const firstName = formData.first_name.trim().toLowerCase()
+      const lastName = formData.last_name.trim().toLowerCase()
+      const emailValue = formData.email.trim().toLowerCase()
+
+      for (const userDoc of usersSnapshot.docs) {
+        const data = userDoc.data() as any
+        const docCreatedFrom = String(data.createdFrom || '').trim().toLowerCase()
+        const docEmail = String(data.email || '').trim().toLowerCase()
+        const docGeneratedEmail = String(data.generated_email || '').trim().toLowerCase()
+        const docFirstName = String(data.first_name || '').trim().toLowerCase()
+        const docLastName = String(data.last_name || '').trim().toLowerCase()
+
+        const matchesLegacyCaregiver =
+          docCreatedFrom === 'caregiver_signup' ||
+          (docFirstName === firstName && docLastName === lastName) ||
+          docEmail === emailValue ||
+          docGeneratedEmail === emailValue
+
+        if (matchesLegacyCaregiver) {
+          await deleteDoc(doc(db, 'users', userDoc.id))
+          console.log(`🗑️ Removed legacy caregiver user document from mobile register: ${userDoc.id}`)
+        }
+      }
       
       // Refresh caregivers list
       const updatedCaregivers = await getCaregivers()
