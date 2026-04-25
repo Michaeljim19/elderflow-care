@@ -18,6 +18,7 @@ import { COLLECTIONS } from './collections';
 import { Caregiver, ShiftType, CaregiverRole, getMaxPatientsForShift } from '@/types';
 import { addCaregiverShift } from './caregiverShifts';
 import { invalidateUsersCache } from './users';
+import { buildApprovedCaregiverState, buildCaregiverAddressFields, isApprovedCaregiverRecord, normalizeCaregiverAddress } from './caregiverRecordSync';
 
 // Helper function to delete existing shift records for a caregiver
 const deleteExistingShiftRecords = async (caregiverId: string): Promise<void> => {
@@ -157,7 +158,7 @@ const buildCaregiverFromUserRecord = (record: any): Caregiver => ({
   contact_number: typeof record.contact_number === 'number'
     ? record.contact_number
     : (record.contact_number ? Number(record.contact_number) : (record.phone ? Number(record.phone) : 0)),
-  address: record.address || '',
+  address: normalizeCaregiverAddress(record),
   shift_type: record.shift_type || 'Day',
   shift_start_date: record.shift_start_date,
   shift_end_date: record.shift_end_date,
@@ -175,71 +176,22 @@ const buildCaregiverFromUserRecord = (record: any): Caregiver => ({
   original_shift_type: record.original_shift_type,
   original_shift_start_date: record.original_shift_start_date,
   original_shift_end_date: record.original_shift_end_date,
+  auth_created: record.auth_created || record.authCreated || false,
   created_at: record.created_at,
   updated_at: record.updated_at
 });
 
-const normalizeAddress = (value: any): Caregiver['address'] => {
-  if (!value) {
-    return '';
-  }
+const normalizeAddress = (value: unknown): ReturnType<typeof normalizeCaregiverAddress> => normalizeCaregiverAddress(value);
 
-  if (typeof value === 'string') {
-    const trimmedValue = value.trim();
-
-    if (!trimmedValue) {
-      return '';
-    }
-
-    try {
-      const parsedValue = JSON.parse(trimmedValue);
-      if (parsedValue && typeof parsedValue === 'object') {
-        return {
-          province: parsedValue.province || parsedValue.province_name || '',
-          city_municipality: parsedValue.city_municipality || parsedValue.city || parsedValue.municipality || '',
-          barangay: parsedValue.barangay || parsedValue.barangay_name || '',
-          street: parsedValue.street || parsedValue.street_address || parsedValue.address_line || ''
-        };
-      }
-    } catch {
-      const parts = trimmedValue.split(',').map(part => part.trim()).filter(Boolean);
-
-      if (parts.length >= 4) {
-        return {
-          street: parts.slice(0, parts.length - 3).join(', '),
-          barangay: parts[parts.length - 3],
-          city_municipality: parts[parts.length - 2],
-          province: parts[parts.length - 1]
-        };
-      }
-
-      return {
-        province: '',
-        city_municipality: '',
-        barangay: '',
-        street: trimmedValue
-      };
-    }
-  }
-
-  if (typeof value === 'object') {
-    return {
-      province: value.province || value.province_name || '',
-      city_municipality: value.city_municipality || value.city || value.municipality || '',
-      barangay: value.barangay || value.barangay_name || '',
-      street: value.street || value.street_address || value.address_line || ''
-    };
-  }
-
-  return '';
-};
-
-const getCaregiverIdentityKeys = (record: Partial<Caregiver> & { first_name?: string; last_name?: string }): string[] => {
+const getCaregiverIdentityKeys = (record: Partial<Caregiver> & { generated_email?: string; uid?: string; auth_uid?: string; accountId?: string }): string[] => {
   return [
     record.caregiver_id,
     record.user_id,
+    record.uid,
+    record.auth_uid,
+    record.accountId,
     record.email,
-    record.first_name && record.last_name ? `${record.first_name}|${record.last_name}` : ''
+    record.generated_email
   ]
     .map(normalizeIdentityKey)
     .filter(Boolean);
@@ -249,18 +201,15 @@ const deriveCaregiverStatus = (record: {
   status?: string;
   contract_start_date?: string;
   contract_end_date?: string;
+  auth_created?: boolean;
+  verified?: boolean;
+  emailVerified?: boolean;
+  email_verified?: boolean;
+  is_active?: boolean;
 }): Caregiver['status'] => {
   const hasContract = Boolean(record.contract_start_date || record.contract_end_date);
-
-  if (!hasContract) {
-    return 'pending';
-  }
-
   const normalizedStatus = normalizeIdentityKey(record.status);
-
-  if (normalizedStatus === 'pending') {
-    return 'pending';
-  }
+  const isApprovedCaregiver = isApprovedCaregiverRecord(record as Record<string, any>);
 
   if (normalizedStatus === 'inactive') {
     return 'Inactive';
@@ -268,6 +217,22 @@ const deriveCaregiverStatus = (record: {
 
   if (normalizedStatus === 'on leave') {
     return 'On Leave';
+  }
+
+  if (normalizedStatus === 'active') {
+    return 'Active';
+  }
+
+  if (isApprovedCaregiver) {
+    return 'Active';
+  }
+
+  if (!hasContract) {
+    return 'pending';
+  }
+
+  if (normalizedStatus === 'pending') {
+    return 'pending';
   }
 
   return 'Active';
@@ -292,8 +257,14 @@ export const getCaregivers = async (): Promise<Caregiver[]> => {
     const seenIdentityKeys = new Set<string>();
 
     const registerCaregiverRecord = (caregiver: Caregiver) => {
+      const identityKeys = getCaregiverIdentityKeys(caregiver);
+
+      if (identityKeys.some(key => seenIdentityKeys.has(key))) {
+        return;
+      }
+
       caregiversWithUserData.push(caregiver);
-      getCaregiverIdentityKeys(caregiver).forEach(key => seenIdentityKeys.add(key));
+      identityKeys.forEach(key => seenIdentityKeys.add(key));
     };
 
     caregiversSnapshot.docs.forEach((caregiverDoc) => {
@@ -314,16 +285,14 @@ export const getCaregivers = async (): Promise<Caregiver[]> => {
             )
           : null);
 
-      const caregiverAddress = normalizeAddress(caregiverData.address);
-      const userAddress = normalizeAddress(userData?.address);
-      const combinedAddress = typeof caregiverAddress === 'object'
-        ? {
-            province: caregiverAddress.province || (typeof userAddress === 'object' ? userAddress.province : ''),
-            city_municipality: caregiverAddress.city_municipality || (typeof userAddress === 'object' ? userAddress.city_municipality : ''),
-            barangay: caregiverAddress.barangay || (typeof userAddress === 'object' ? userAddress.barangay : ''),
-            street: caregiverAddress.street || (typeof userAddress === 'object' ? userAddress.street : '')
-          }
-        : userAddress || caregiverAddress;
+      const caregiverAddress = normalizeAddress(caregiverData);
+      const userAddress = normalizeAddress(userData);
+      const combinedAddress = {
+        province: caregiverAddress.province || userAddress.province,
+        city_municipality: caregiverAddress.city_municipality || userAddress.city_municipality,
+        barangay: caregiverAddress.barangay || userAddress.barangay,
+        street: caregiverAddress.street || userAddress.street
+      };
 
       const combinedData: Caregiver = {
         caregiver_id,
@@ -352,6 +321,7 @@ export const getCaregivers = async (): Promise<Caregiver[]> => {
         original_shift_type: caregiverData.original_shift_type,
         original_shift_start_date: caregiverData.original_shift_start_date,
         original_shift_end_date: caregiverData.original_shift_end_date,
+        auth_created: userData?.auth_created ?? caregiverData.auth_created ?? false,
         created_at: caregiverData.created_at || userData?.created_at,
         updated_at: caregiverData.updated_at || userData?.updated_at
       };
@@ -418,7 +388,7 @@ export const getCaregiver = async (caregiverId: string): Promise<Caregiver | nul
         // Add other fields that might be in user object
         middle_name: (user as any).middle_name,
         birthday: (user as any).birthday,
-        address: user.address,
+        address: normalizeAddress(user),
         shift_start_date: (user as any).shift_start_date,
         shift_end_date: (user as any).shift_end_date,
         specialization: (user as any).specialization,
@@ -427,7 +397,8 @@ export const getCaregiver = async (caregiverId: string): Promise<Caregiver | nul
         temporary_schedule_reason: (user as any).temporary_schedule_reason,
         original_shift_type: (user as any).original_shift_type,
         original_shift_start_date: (user as any).original_shift_start_date,
-        original_shift_end_date: (user as any).original_shift_end_date
+        original_shift_end_date: (user as any).original_shift_end_date,
+        auth_created: (user as any).auth_created || false
       } as Caregiver;
     }
     return null;
@@ -482,6 +453,7 @@ export const addCaregiver = async (caregiver: any): Promise<string> => {
         assigned_patients_count: 0, // Initialize to 0
         max_patients: getMaxPatientsForShift(caregiver.shift_type),
         status: 'Active',
+        ...buildCaregiverAddressFields(caregiver.address || caregiver),
         created_at: Timestamp.now(),
         updated_at: Timestamp.now()
       };
@@ -585,15 +557,34 @@ export const generateMissingShiftRecords = async (caregiverId: string): Promise<
 export const updateCaregiver = async (caregiverId: string, updates: Partial<FirebaseCaregiver>): Promise<void> => {
   try {
     const docRef = doc(db, COLLECTIONS.CAREGIVERS, caregiverId);
+    const currentCaregiverDoc = await getDoc(docRef);
+    const currentCaregiverData = currentCaregiverDoc.exists() ? (currentCaregiverDoc.data() as Record<string, any>) : null;
     
     // Check if schedule dates are being updated
     const isScheduleUpdated = updates.shift_start_date || updates.shift_end_date || updates.shift_type;
     
     // If shift_type is being updated, update max_patients accordingly
+    const addressFields = updates.address ? buildCaregiverAddressFields(updates.address) : null;
+
     const updatesWithTimestamp: any = {
       ...updates,
+      ...(addressFields || {}),
       updated_at: Timestamp.now()
     };
+
+    if (isApprovedCaregiverRecord(currentCaregiverData)) {
+      updatesWithTimestamp.auth_created = true;
+      updatesWithTimestamp.verified = true;
+      updatesWithTimestamp.emailVerified = true;
+      updatesWithTimestamp.email_verified = true;
+
+      const normalizedNextStatus = normalizeIdentityKey(updatesWithTimestamp.status);
+      updatesWithTimestamp.is_active = normalizedNextStatus === 'inactive' ? false : true;
+
+      if (!normalizedNextStatus || normalizedNextStatus === 'pending') {
+        updatesWithTimestamp.status = 'Active';
+      }
+    }
     
     if (updates.shift_type) {
       updatesWithTimestamp.max_patients = getMaxPatientsForShift(updates.shift_type);
@@ -1002,10 +993,21 @@ export const fixCaregiverFields = async (): Promise<void> => {
       
       // Check if fields are missing or need updating
       const updates: any = {};
+
+      const addressFields = buildCaregiverAddressFields(caregiverData);
+      if (addressFields.address.province || addressFields.address.city_municipality || addressFields.address.barangay || addressFields.address.street) {
+        Object.assign(updates, addressFields);
+      }
       
       // Set default status if missing
       if (!caregiverData.status) {
         updates.status = 'Active'; // Default to Active for existing caregivers
+      }
+
+      const isApprovedCaregiver = isApprovedCaregiverRecord(caregiverData);
+
+      if (isApprovedCaregiver) {
+        Object.assign(updates, buildApprovedCaregiverState());
       }
       
       // Set max_patients based on shift_type if missing

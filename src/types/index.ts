@@ -12,10 +12,13 @@ export interface User {
   role: 'Patient' | 'Caregiver' | 'Admin' | 'Guardian';
   contact_number: string;
   address: string;
+  birthdate?: string;
+  gender?: 'Male' | 'Female' | 'Other';
   birthday?: string; // Birthday field for users
   created_at: Timestamp;
   updated_at: Timestamp;
   is_active: boolean;
+  auth_created?: boolean;
 }
 
 // 2. Patient - Extends User (with temporary compatibility fields)
@@ -65,7 +68,7 @@ export interface Caregiver {
   last_name?: string;
   email?: string;
   contact_number?: number;
-  address?: string;
+  address?: string | CaregiverAddress;
   
   // Additional caregiver-specific fields
   hire_date?: string;
@@ -75,6 +78,11 @@ export interface Caregiver {
   max_patients?: number;
   assigned_patients_count?: number;
   status?: 'pending' | 'Active' | 'Inactive' | 'On Leave';
+  auth_created?: boolean;
+  emailVerified?: boolean;
+  email_verified?: boolean;
+  is_active?: boolean;
+  verified?: boolean;
   
   // Additional fields found in the system
   middle_name?: string;
@@ -225,6 +233,8 @@ export interface CreateUserRequest {
   role: UserRole;
   contact_number: string;
   address: string;
+  birthdate?: string;
+  gender?: 'Male' | 'Female' | 'Other';
   password?: string;
 }
 
@@ -271,6 +281,13 @@ export interface ContactInfo {
   name: string;
   phone: string;
   relationship: string;
+}
+
+export interface CaregiverAddress {
+  province: string;
+  city_municipality: string;
+  barangay: string;
+  street: string;
 }
 
 // Account management types (for the new user-centered system)

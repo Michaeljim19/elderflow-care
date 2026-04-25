@@ -48,6 +48,7 @@ import {
   CAREGIVER_PATIENT_LIMITS 
 } from "@/types"
 import { addCaregiver, getCaregivers, updateCaregiver, deleteCaregiver, syncAllCaregiverPatientCounts, fixCaregiverFields, uploadCaregiverLicense, uploadCaregiverLicenseAsBase64, debugPatientAssignments, forceSyncCaregiverPatientCount } from "@/services/firebase/caregivers"
+import { normalizeCaregiverAddress } from "@/services/firebase/caregiverRecordSync"
 import { collection, getDocs, query, where } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { getPatients, updatePatient, getPatientsByCaregiver } from "@/services/firebase/patients"
@@ -130,37 +131,16 @@ const Caregivers = () => {
   };
 
   // Helper function to format address into readable string
-  const formatAddress = (address: any): string => {
-    if (!address) return "Not provided";
-    
-    let addressObj = null;
-    
-    // Handle different address formats
-    if (typeof address === 'string') {
-      try {
-        // Try to parse as JSON first
-        addressObj = JSON.parse(address);
-      } catch {
-        // If it's not JSON, treat as plain string
-        return address;
-      }
-    } else if (typeof address === 'object') {
-      addressObj = address;
-    }
-    
-    // Format the address object into readable string
-    if (addressObj && typeof addressObj === 'object') {
-      const parts = [
-        addressObj.street,
-        addressObj.barangay,
-        addressObj.city_municipality,
-        addressObj.province
-      ].filter(part => part && part.trim() !== '');
-      
-      return parts.length > 0 ? parts.join(', ') : "No address specified";
-    }
-    
-    return "Invalid address format";
+  const formatAddress = (caregiverOrAddress: any): string => {
+    const normalizedAddress = normalizeCaregiverAddress(caregiverOrAddress?.address ?? caregiverOrAddress)
+    const parts = [
+      normalizedAddress.street,
+      normalizedAddress.barangay,
+      normalizedAddress.city_municipality,
+      normalizedAddress.province
+    ].filter(part => part && part.trim() !== '')
+
+    return parts.length > 0 ? parts.join(', ') : "Not provided"
   };
 
   // Helper function to get file extension from license URL
@@ -296,13 +276,6 @@ const Caregivers = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [uploadProgress, setUploadProgress] = useState<number>(0)
 
-  const emptyAddress = {
-    province: "",
-    city_municipality: "",
-    barangay: "",
-    street: ""
-  }
-
   const normalizePhilippineContactNumber = (value: string) => {
     const digits = value.replace(/\D/g, '')
 
@@ -319,39 +292,7 @@ const Caregivers = () => {
 
   const isValidPhilippineContactNumber = (value: string) => /^09\d{9}$/.test(value)
 
-  const normalizeAddressForEdit = (address: Caregiver['address']) => {
-    if (!address || typeof address === 'string') {
-      if (typeof address === 'string' && address.trim()) {
-        try {
-          const parsedAddress = JSON.parse(address)
-          if (parsedAddress && typeof parsedAddress === 'object') {
-            return {
-              province: parsedAddress.province || "",
-              city_municipality: parsedAddress.city_municipality || "",
-              barangay: parsedAddress.barangay || "",
-              street: parsedAddress.street || ""
-            }
-          }
-        } catch {
-          // Fall through to preserve the raw string as the street value.
-        }
-
-        return {
-          ...emptyAddress,
-          street: address
-        }
-      }
-
-      return { ...emptyAddress }
-    }
-
-    return {
-      province: address.province || "",
-      city_municipality: address.city_municipality || "",
-      barangay: address.barangay || "",
-      street: address.street || ""
-    }
-  }
+  const normalizeAddressForEdit = (caregiverOrAddress: any) => normalizeCaregiverAddress(caregiverOrAddress?.address ?? caregiverOrAddress)
 
   // Helper function to check caregiver availability
   const checkCaregiverAvailability = async (caregivers: Caregiver[]) => {
@@ -790,7 +731,7 @@ const Caregivers = () => {
       birthday: caregiver.birthday || "",
       email: caregiver.email || "",
       contact_number: caregiver.contact_number?.toString() || "",
-      address: normalizeAddressForEdit(caregiver.address),
+      address: normalizeAddressForEdit(caregiver),
       selectedProvinceCode: "",
       selectedCityCode: "",
       selectedBarangayCode: "",
@@ -812,7 +753,7 @@ const Caregivers = () => {
       return
     }
 
-    const caregiverAddress = normalizeAddressForEdit(editingCaregiver.address)
+    const caregiverAddress = normalizeAddressForEdit(editingCaregiver)
     if (!caregiverAddress.province) {
       return
     }
@@ -900,7 +841,8 @@ const Caregivers = () => {
       let updated = 0
       
       for (const caregiver of allCaregivers) {
-        let expectedStatus: 'pending' | 'Active' | 'Inactive' | 'On Leave' = 'pending'
+        const isApprovedCaregiver = caregiver.auth_created === true || caregiver.verified === true || caregiver.emailVerified === true || caregiver.email_verified === true || caregiver.is_active === true || caregiver.status === 'Active'
+        let expectedStatus: 'pending' | 'Active' | 'Inactive' | 'On Leave' = isApprovedCaregiver ? 'Active' : 'pending'
         
         // Check if caregiver has shift dates
         if (caregiver.shift_start_date && caregiver.shift_end_date) {
@@ -913,6 +855,8 @@ const Caregivers = () => {
           // If only start date is set, active from start date onwards
           const startDate = new Date(timestampToDate(caregiver.shift_start_date))
           expectedStatus = today >= startDate ? 'Active' : 'Inactive'
+        } else if (isApprovedCaregiver) {
+          expectedStatus = 'Active'
         } else {
           // If no shift dates, treat the caregiver as pending until contract details exist
           expectedStatus = 'pending'
@@ -1443,7 +1387,7 @@ const Caregivers = () => {
         last_name: formData.last_name,
         birthday: formData.birthday,
         email: formData.email,
-        contact_number: normalizedContactNumber,
+        contact_number: Number(normalizedContactNumber),
         address: addressValue,
         shift_type: formData.shift_type as "Day" | "Night",
         shift_start_date: formData.shift_start_date ? dateToTimestamp(formData.shift_start_date) : editingCaregiver.shift_start_date,
@@ -1489,7 +1433,7 @@ const Caregivers = () => {
         }
       }
 
-      await updateCaregiver(editingCaregiver.caregiver_id, updatedData)
+      await updateCaregiver(editingCaregiver.caregiver_id, updatedData as any)
       
       // Check if shift changed and handle patient redistribution
       const shiftChanged = originalShiftType !== formData.shift_type
@@ -2438,7 +2382,7 @@ const Caregivers = () => {
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Address</Label>
-                    <p className="text-sm">{formatAddress(viewingCaregiver.address)}</p>
+                    <p className="text-sm">{formatAddress(viewingCaregiver)}</p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">

@@ -21,63 +21,229 @@ import { db } from '../../lib/firebase'
 import { COLLECTIONS } from './collections'
 import { getMaxPatientsForShift } from '../../types'
 import type { Account } from '../../types'
+import { buildApprovedCaregiverState, buildCaregiverAddressFields } from './caregiverRecordSync'
+import { normalizePatientDocumentId } from './patientRecordSync'
 
-// Helper function to update caregiver and shift records after Firebase Auth creation
-const updateCaregiverRecordsWithNewId = async (oldDocumentId: string, newFirebaseUid: string, accountRole: string): Promise<void> => {
+const normalizeIdentityKey = (value: unknown): string => {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  return value.trim().toLowerCase()
+}
+
+// Helper function to update caregiver and related records after Firebase Auth creation
+const updateCaregiverRecordsWithNewId = async (
+  oldDocumentId: string,
+  newFirebaseUid: string,
+  account: Account,
+  fallbackData?: Record<string, any>
+): Promise<void> => {
   try {
-    if (String(accountRole || '').toLowerCase() !== 'caregiver') {
+    if (String(account.role || '').toLowerCase() !== 'caregiver') {
       console.log('Not a caregiver account, skipping caregiver record updates')
       return
     }
 
     console.log(`🔗 Updating caregiver records: ${oldDocumentId} -> ${newFirebaseUid}`)
 
-    
-    // Update caregiver record to use the new Firebase UID as caregiver_id
-    const caregiversRef = collection(db, 'caregivers')
-    const caregiverQuery = query(caregiversRef, where('caregiver_id', '==', oldDocumentId))
-    const caregiverSnapshot = await getDocs(caregiverQuery)
-    
-    if (!caregiverSnapshot.empty) {
-      const caregiverDoc = caregiverSnapshot.docs[0]
-      const caregiverData = caregiverDoc.data()
-      
-      // Create new caregiver record with Firebase UID as document ID and caregiver_id
-      await setDoc(doc(db, 'caregivers', newFirebaseUid), {
-        ...caregiverData,
-        caregiver_id: newFirebaseUid,
-        user_id: newFirebaseUid, // Keep user_id matching Firebase UID for consistency
-        updated_at: Timestamp.now()
+    const caregiversSnapshot = await getDocs(collection(db, COLLECTIONS.CAREGIVERS))
+    const accountEmailCandidates = [account.email, account.generated_email]
+      .map(normalizeIdentityKey)
+      .filter(Boolean)
+    const legacyIdSet = new Set(
+      [
+        account.id,
+        oldDocumentId,
+        fallbackData?.accountId,
+        fallbackData?.caregiver_id,
+        fallbackData?.user_id,
+        fallbackData?.uid,
+        fallbackData?.auth_uid
+      ]
+        .map(normalizeIdentityKey)
+        .filter(Boolean)
+    )
+
+    const matchingCaregiverDocs = caregiversSnapshot.docs.filter((caregiverDoc) => {
+      const caregiverData = caregiverDoc.data() as Record<string, any>
+      const docIdentifiers = [
+        caregiverDoc.id,
+        caregiverData.accountId,
+        caregiverData.caregiver_id,
+        caregiverData.user_id,
+        caregiverData.uid,
+        caregiverData.auth_uid
+      ]
+        .map(normalizeIdentityKey)
+        .filter(Boolean)
+
+      if (docIdentifiers.some(identifier => legacyIdSet.has(identifier))) {
+        return true
+      }
+
+      const caregiverEmails = [caregiverData.email, caregiverData.generated_email]
+        .map(normalizeIdentityKey)
+        .filter(Boolean)
+
+      if (accountEmailCandidates.some(email => caregiverEmails.includes(email))) {
+        return true
+      }
+
+      return false
+    })
+
+    const sourceCaregiverDoc = matchingCaregiverDocs.sort((a, b) => {
+      const aScore = Object.keys(a.data() || {}).length
+      const bScore = Object.keys(b.data() || {}).length
+      return bScore - aScore
+    })[0]
+
+    const sourceCaregiverData = (sourceCaregiverDoc?.data() as Record<string, any>) || fallbackData || {}
+    const addressFields = buildCaregiverAddressFields(sourceCaregiverData)
+    const {
+      generated_password,
+      verification_token,
+      password_changed,
+      password_changed_at,
+      suspended_at,
+      suspension_reason,
+      reactivated_at,
+      verifiedAt,
+      accountId,
+      ...safeSourceCaregiverData
+    } = sourceCaregiverData as Record<string, any>
+
+    const migratedCaregiverData = {
+      ...safeSourceCaregiverData,
+      ...addressFields,
+      ...buildApprovedCaregiverState(),
+      accountId: sourceCaregiverData.accountId || account.id,
+      caregiver_id: newFirebaseUid,
+      user_id: newFirebaseUid,
+      uid: newFirebaseUid,
+      auth_uid: newFirebaseUid,
+      legacy_caregiver_id: oldDocumentId,
+      updated_at: Timestamp.now()
+    }
+
+    await setDoc(doc(db, COLLECTIONS.CAREGIVERS, newFirebaseUid), migratedCaregiverData, { merge: true })
+
+    const migratedIdSet = new Set(
+      [
+        sourceCaregiverData.accountId,
+        oldDocumentId,
+        sourceCaregiverDoc?.id,
+        sourceCaregiverData.caregiver_id,
+        sourceCaregiverData.user_id,
+        sourceCaregiverData.uid,
+        sourceCaregiverData.auth_uid
+      ]
+        .map(normalizeIdentityKey)
+        .filter(Boolean)
+    )
+
+    const updateDocsInCollection = async (
+      collectionName: string,
+      updater: (data: Record<string, any>) => Record<string, any> | null
+    ) => {
+      const snapshot = await getDocs(collection(db, collectionName))
+
+      const updatePromises = snapshot.docs.map(async (recordDoc) => {
+        const recordData = recordDoc.data() as Record<string, any>
+        const updatePayload = updater(recordData)
+
+        if (!updatePayload) {
+          return
+        }
+
+        await updateDoc(recordDoc.ref, updatePayload)
       })
-      
-      // Delete the old caregiver record
-      await deleteDoc(caregiverDoc.ref)
-      
-      console.log(`✅ Updated caregiver record: ${caregiverDoc.id} -> ${newFirebaseUid}`)
-    } else {
-      console.log(`⚠️ No caregiver record found with caregiver_id: ${oldDocumentId}`)
-    }
-    
-    // Update all caregiver_shifts that reference the old caregiver_id
-    const shiftsRef = collection(db, 'caregiver_shifts')
-    const shiftsQuery = query(shiftsRef, where('caregiver_id', '==', oldDocumentId))
-    const shiftsSnapshot = await getDocs(shiftsQuery)
-    
-    if (!shiftsSnapshot.empty) {
-      const updatePromises = shiftsSnapshot.docs.map(shiftDoc => 
-        updateDoc(shiftDoc.ref, {
-          caregiver_id: newFirebaseUid,
-          updated_at: Timestamp.now()
-        })
-      )
-      
+
       await Promise.all(updatePromises)
-      console.log(`✅ Updated ${shiftsSnapshot.size} caregiver shifts to use new caregiver_id: ${newFirebaseUid}`)
-    } else {
-      console.log(`ℹ️ No caregiver shifts found for caregiver_id: ${oldDocumentId}`)
     }
-    
-    console.log(`🎉 Successfully updated all caregiver records to use Firebase UID: ${newFirebaseUid}`)
+
+    await updateDocsInCollection(COLLECTIONS.CAREGIVER_SHIFTS, (shiftData) => {
+      if (!migratedIdSet.has(normalizeIdentityKey(shiftData.caregiver_id))) {
+        return null
+      }
+
+      return {
+        caregiver_id: newFirebaseUid,
+        updated_at: Timestamp.now()
+      }
+    })
+
+    await updateDocsInCollection(COLLECTIONS.PATIENTS, (patientData) => {
+      const updates: Record<string, any> = {}
+      let hasChanges = false
+
+      if (migratedIdSet.has(normalizeIdentityKey(patientData.assigned_caregiver_id))) {
+        updates.assigned_caregiver_id = newFirebaseUid
+        hasChanges = true
+      }
+
+      if (migratedIdSet.has(normalizeIdentityKey(patientData.assigned_day_caregiver_id))) {
+        updates.assigned_day_caregiver_id = newFirebaseUid
+        hasChanges = true
+      }
+
+      if (migratedIdSet.has(normalizeIdentityKey(patientData.assigned_night_caregiver_id))) {
+        updates.assigned_night_caregiver_id = newFirebaseUid
+        hasChanges = true
+      }
+
+      if (!hasChanges) {
+        return null
+      }
+
+      updates.updated_at = Timestamp.now()
+      return updates
+    })
+
+    await updateDocsInCollection(COLLECTIONS.REMINDERS, (reminderData) => {
+      const updates: Record<string, any> = {}
+      let hasChanges = false
+
+      if (migratedIdSet.has(normalizeIdentityKey(reminderData.caregiverRef))) {
+        updates.caregiverRef = newFirebaseUid
+        hasChanges = true
+      }
+
+      if (migratedIdSet.has(normalizeIdentityKey(reminderData.userId))) {
+        updates.userId = newFirebaseUid
+        hasChanges = true
+      }
+
+      if (!hasChanges) {
+        return null
+      }
+
+      updates.updated_at = Timestamp.now()
+      return updates
+    })
+
+    await updateDocsInCollection(COLLECTIONS.HANDOVER_REPORTS, (reportData) => {
+      if (!migratedIdSet.has(normalizeIdentityKey(reportData.caregiver_id))) {
+        return null
+      }
+
+      return {
+        caregiver_id: newFirebaseUid,
+        updated_at: Timestamp.now()
+      }
+    })
+
+    for (const caregiverDoc of matchingCaregiverDocs) {
+      if (normalizeIdentityKey(caregiverDoc.id) === normalizeIdentityKey(newFirebaseUid)) {
+        continue
+      }
+
+      await deleteDoc(caregiverDoc.ref)
+      console.log(`🗑️ Removed legacy caregiver document: ${caregiverDoc.id}`)
+    }
+
+    console.log(`🎉 Successfully updated caregiver records to use Firebase UID: ${newFirebaseUid}`)
   } catch (error) {
     console.error('❌ Error updating caregiver records with new Firebase UID:', error)
     throw error
@@ -92,7 +258,8 @@ const updatePatientRecordsWithNewId = async (oldDocumentId: string, newFirebaseU
       return
     }
 
-    console.log(`🔗 Updating patient records: ${oldDocumentId} -> ${newFirebaseUid}`)
+    const canonicalPatientId = normalizePatientDocumentId(newFirebaseUid)
+    console.log(`🔗 Updating patient records: ${oldDocumentId} -> ${canonicalPatientId}`)
     
     // Update patient record - find by user_id (which should match the old user document ID)
     const patientsRef = collection(db, COLLECTIONS.PATIENTS)
@@ -106,18 +273,19 @@ const updatePatientRecordsWithNewId = async (oldDocumentId: string, newFirebaseU
       
       console.log(`📋 Found patient record: ${patientDoc.id} with patient_id: ${oldPatientId} and user_id: ${oldDocumentId}`)
       
-      // Create new patient record with Firebase UID as document ID and patient_id
-      await setDoc(doc(db, COLLECTIONS.PATIENTS, newFirebaseUid), {
+      // Create new patient record with the canonical patient-prefixed document ID
+      await setDoc(doc(db, COLLECTIONS.PATIENTS, canonicalPatientId), {
         ...patientData,
-        patient_id: newFirebaseUid,
-        user_id: newFirebaseUid, // Keep user_id matching Firebase UID for consistency
+        patient_id: canonicalPatientId,
+        user_id: canonicalPatientId,
+        auth_uid: newFirebaseUid,
         updated_at: Timestamp.now()
       })
       
       // Delete the old patient record
       await deleteDoc(patientDoc.ref)
       
-      console.log(`✅ Updated patient record: ${patientDoc.id} -> ${newFirebaseUid}`)
+      console.log(`✅ Updated patient record: ${patientDoc.id} -> ${canonicalPatientId}`)
       
       // Update all medical_history records that reference the old patient_id
       const medHistoryRef = collection(db, COLLECTIONS.MEDICAL_HISTORY)
@@ -127,13 +295,13 @@ const updatePatientRecordsWithNewId = async (oldDocumentId: string, newFirebaseU
       if (!medHistorySnapshot.empty) {
         const updatePromises = medHistorySnapshot.docs.map(medHistoryDoc => 
           updateDoc(medHistoryDoc.ref, {
-            patient_id: newFirebaseUid,
+            patient_id: canonicalPatientId,
             updated_at: Timestamp.now()
           })
         )
         
         await Promise.all(updatePromises)
-        console.log(`✅ Updated ${medHistorySnapshot.size} medical history records to use new patient_id: ${newFirebaseUid}`)
+        console.log(`✅ Updated ${medHistorySnapshot.size} medical history records to use new patient_id: ${canonicalPatientId}`)
       } else {
         console.log(`ℹ️ No medical history records found for patient_id: ${oldPatientId}`)
       }
@@ -146,13 +314,13 @@ const updatePatientRecordsWithNewId = async (oldDocumentId: string, newFirebaseU
       if (!medicationsSnapshot.empty) {
         const updatePromises = medicationsSnapshot.docs.map(medicationDoc => 
           updateDoc(medicationDoc.ref, {
-            patient_id: newFirebaseUid,
+            patient_id: canonicalPatientId,
             updated_at: Timestamp.now()
           })
         )
         
         await Promise.all(updatePromises)
-        console.log(`✅ Updated ${medicationsSnapshot.size} medication records to use new patient_id: ${newFirebaseUid}`)
+        console.log(`✅ Updated ${medicationsSnapshot.size} medication records to use new patient_id: ${canonicalPatientId}`)
       } else {
         console.log(`ℹ️ No medication records found for patient_id: ${oldPatientId}`)
       }
@@ -161,7 +329,7 @@ const updatePatientRecordsWithNewId = async (oldDocumentId: string, newFirebaseU
       console.log(`⚠️ No patient record found with user_id: ${oldDocumentId}`)
     }
     
-    console.log(`🎉 Successfully updated all patient records to use Firebase UID: ${newFirebaseUid}`)
+    console.log(`🎉 Successfully updated all patient records to use canonical patient ID: ${canonicalPatientId}`)
   } catch (error) {
     console.error('❌ Error updating patient records with new Firebase UID:', error)
     throw error
@@ -234,18 +402,6 @@ const cleanupLegacyUserDocsForAccount = async (account: Account, canonicalUserId
       query(usersRef, where('email', '==', account.email))
     ]
 
-    if (String(account.role || '').toLowerCase() === 'caregiver' && account.name) {
-      const nameParts = account.name.split(' ').filter(part => part.trim() !== '')
-      const first_name = nameParts[0] || ''
-      const last_name = nameParts.length > 1 ? nameParts[nameParts.length - 1] : ''
-
-      if (first_name && last_name) {
-        candidateQueries.push(
-          query(usersRef, where('role', '==', 'Caregiver'), where('first_name', '==', first_name), where('last_name', '==', last_name))
-        )
-      }
-    }
-
     const documentIdsToDelete = new Set<string>()
 
     for (const candidateQuery of candidateQueries) {
@@ -296,11 +452,70 @@ const findExistingUserDocForAccount = async (account: Account) => {
   return null
 }
 
+const findExistingCaregiverDocForAccount = async (account: Account) => {
+  const caregiversRef = collection(db, COLLECTIONS.CAREGIVERS)
+
+  const queries = [
+    query(caregiversRef, where('accountId', '==', account.id)),
+    query(caregiversRef, where('caregiver_id', '==', account.id)),
+    query(caregiversRef, where('user_id', '==', account.id)),
+    query(caregiversRef, where('uid', '==', account.id)),
+    query(caregiversRef, where('auth_uid', '==', account.id))
+  ]
+
+  if (String(account.role || '').toLowerCase() === 'caregiver') {
+    queries.push(
+      query(caregiversRef, where('generated_email', '==', account.generated_email)),
+      query(caregiversRef, where('email', '==', account.email)),
+      query(caregiversRef, where('email', '==', account.generated_email))
+    )
+  }
+
+  for (const candidateQuery of queries) {
+    const snapshot = await getDocs(candidateQuery)
+    if (!snapshot.empty) {
+      return snapshot.docs[0]
+    }
+  }
+
+  return null
+}
+
+const findExistingPatientDocForAccount = async (account: Account) => {
+  const patientsRef = collection(db, COLLECTIONS.PATIENTS)
+
+  const queries = [
+    query(patientsRef, where('accountId', '==', account.id)),
+    query(patientsRef, where('patient_id', '==', account.id)),
+    query(patientsRef, where('user_id', '==', account.id)),
+    query(patientsRef, where('uid', '==', account.id)),
+    query(patientsRef, where('auth_uid', '==', account.id))
+  ]
+
+  if (String(account.role || '').toLowerCase() === 'patient') {
+    queries.push(
+      query(patientsRef, where('generated_email', '==', account.generated_email)),
+      query(patientsRef, where('email', '==', account.email)),
+      query(patientsRef, where('email', '==', account.generated_email))
+    )
+  }
+
+  for (const candidateQuery of queries) {
+    const snapshot = await getDocs(candidateQuery)
+    if (!snapshot.empty) {
+      return snapshot.docs[0]
+    }
+  }
+
+  return null
+}
+
 // Create Firebase Auth user for verified and active accounts
 export const createFirebaseAuthUser = async (account: Account): Promise<string | null> => {
   try {
     console.log('Creating Firebase Auth user for account:', account.id)
     const isCaregiverAccount = String(account.role || '').toLowerCase() === 'caregiver'
+    const isPatientAccount = String(account.role || '').toLowerCase() === 'patient'
     
     // Create Firebase Auth user with generated credentials
     const auth = getAuth()
@@ -312,6 +527,8 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
     
     const user = userCredential.user
     console.log('Firebase Auth user created:', user.uid)
+      const canonicalPatientId = isPatientAccount ? normalizePatientDocumentId(user.uid) : user.uid
+    const buildAddressPayload = (sourceData: any) => buildCaregiverAddressFields(sourceData)
 
     const buildCaregiverMirror = (sourceData: any, fallbackName: string) => ({
       caregiver_id: user.uid,
@@ -323,7 +540,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
       contact_number: typeof sourceData.contact_number === 'number'
         ? sourceData.contact_number
         : (sourceData.contact_number ? Number(sourceData.contact_number) : (sourceData.phone ? Number(sourceData.phone) : 0)),
-      address: sourceData.address || '',
+      ...buildAddressPayload(sourceData),
       shift_type: sourceData.shift_type || 'Day',
       shift_start_date: sourceData.shift_start_date || null,
       shift_end_date: sourceData.shift_end_date || null,
@@ -363,6 +580,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
         // Get the existing user data
         const existingUserData = existingUserDoc.data()
         const canonicalUserId = existingUserDoc.id
+        const addressFields = buildCaregiverAddressFields(existingUserData)
         
         console.log(`Found existing user record: ${existingUserDoc.id}, moving to Firebase Auth UID: ${user.uid}`)
 
@@ -370,39 +588,53 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
           // Move caregiver/user records to the Firebase Auth UID so every identifier matches.
           await setDoc(doc(db, 'users', user.uid), {
             ...existingUserData,
+            ...addressFields,
+            address: existingUserData.address || JSON.stringify(addressFields.address),
+            accountId: existingUserData.accountId || account.id,
             uid: user.uid,
             auth_uid: user.uid,
             user_id: user.uid,
-            is_active: true,
-            status: 'Active',
+            ...buildApprovedCaregiverState(),
             auth_created: true,
             emailVerified: true,
             verified: true,
             updated_at: Timestamp.now()
           }, { merge: true })
 
-          await mirrorCaregiverRecord(existingUserData, account.name, user.uid)
-
-          const caregiverRef = doc(db, 'caregivers', user.uid)
-          await setDoc(caregiverRef, {
-            caregiver_id: user.uid,
-            user_id: user.uid,
-            uid: user.uid,
-            auth_uid: user.uid,
-            is_active: true,
-            status: 'Active',
-            updated_at: Timestamp.now()
-          }, { merge: true })
+          await updateCaregiverRecordsWithNewId(canonicalUserId, user.uid, account, existingUserData)
 
           if (canonicalUserId !== user.uid) {
             await deleteDoc(doc(db, 'users', canonicalUserId))
-            const existingCaregiverDoc = await getDoc(doc(db, 'caregivers', canonicalUserId))
-            if (existingCaregiverDoc.exists()) {
-              await deleteDoc(existingCaregiverDoc.ref)
-            }
           }
 
           console.log(`✅ Moved caregiver/user document ID to Firebase Auth UID: ${user.uid}`)
+        } else if (isPatientAccount) {
+          const canonicalPatientId = normalizePatientDocumentId(user.uid)
+          const legacyPatientDoc = await findExistingPatientDocForAccount(account)
+          const legacyPatientData = legacyPatientDoc?.data() as Record<string, any> | undefined
+
+          await setDoc(doc(db, 'users', canonicalPatientId), {
+            ...existingUserData,
+            uid: canonicalPatientId,
+            user_id: canonicalPatientId,
+            auth_uid: user.uid,
+            birthdate: legacyPatientData?.birthdate || legacyPatientData?.birthday || existingUserData.birthdate || existingUserData.birthday,
+            gender: legacyPatientData?.gender || existingUserData.gender,
+            is_active: true,
+            status: 'active',
+            auth_created: true,
+            emailVerified: true,
+            verified: true,
+            updated_at: Timestamp.now()
+          }, { merge: true })
+
+          await updatePatientRecordsWithNewId(existingUserDoc.id, user.uid, account.role)
+
+          if (existingUserDoc.id !== canonicalPatientId) {
+            await deleteDoc(existingUserDoc.ref)
+          }
+
+          console.log(`✅ Moved patient/user document ID to canonical patient ID: ${canonicalPatientId}`)
         } else {
           // Create a new document with Firebase Auth UID as document ID
           await setDoc(doc(db, 'users', user.uid), {
@@ -420,7 +652,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
           await mirrorCaregiverRecord(existingUserData, account.name)
           
           // Update caregiver and shift records if this is a caregiver account
-          await updateCaregiverRecordsWithNewId(existingUserDoc.id, user.uid, account.role)
+          await updateCaregiverRecordsWithNewId(existingUserDoc.id, user.uid, account, existingUserData)
           
           // Update patient and medical history records if this is a patient account
           await updatePatientRecordsWithNewId(existingUserDoc.id, user.uid, account.role)
@@ -431,7 +663,106 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
           console.log(`✅ Moved user record from ${existingUserDoc.id} to ${user.uid} (Firebase Auth UID now matches document ID)`)
         }
       } else if (isCaregiverAccount) {
-        throw new Error(`No existing caregiver user document found for account ${account.id}. Refusing to create a new one.`)
+        const legacyCaregiverDoc = await findExistingCaregiverDocForAccount(account)
+
+        if (!legacyCaregiverDoc) {
+          throw new Error(`No existing caregiver document found for account ${account.id}. Refusing to create a new one.`)
+        }
+
+        const legacyCaregiverData = legacyCaregiverDoc.data() as Record<string, any>
+        const addressFields = buildCaregiverAddressFields(legacyCaregiverData)
+
+        await setDoc(doc(db, 'users', user.uid), {
+          ...legacyCaregiverData,
+          ...addressFields,
+          address: legacyCaregiverData.address || JSON.stringify(addressFields.address),
+          uid: user.uid,
+          user_id: user.uid,
+          auth_uid: user.uid,
+          accountId: account.id,
+          ...buildApprovedCaregiverState(),
+          auth_created: true,
+          emailVerified: true,
+          verified: true,
+          updated_at: Timestamp.now()
+        }, { merge: true })
+
+        await updateCaregiverRecordsWithNewId(legacyCaregiverDoc.id, user.uid, account, legacyCaregiverData)
+
+        console.log(`✅ Rehydrated caregiver-only record ${legacyCaregiverDoc.id} into users/${user.uid} and caregivers/${user.uid}`)
+      } else if (isPatientAccount) {
+        const legacyPatientDoc = await findExistingPatientDocForAccount(account)
+
+        const canonicalPatientId = normalizePatientDocumentId(user.uid)
+
+        if (!legacyPatientDoc) {
+          const nameParts = account.name.split(' ').filter(part => part.trim() !== '')
+          const first_name = nameParts[0] || ''
+          const middle_name = nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : ''
+          const last_name = nameParts.length > 1 ? nameParts[nameParts.length - 1] : ''
+
+          await setDoc(doc(db, 'users', canonicalPatientId), {
+            uid: canonicalPatientId,
+            user_id: canonicalPatientId,
+            auth_uid: user.uid,
+            first_name,
+            middle_name,
+            last_name,
+            email: account.generated_email,
+            role: account.role,
+            contact_number: '',
+            address: '',
+            created_at: Timestamp.now(),
+            updated_at: Timestamp.now(),
+            is_active: true,
+            status: 'active',
+            emailVerified: true,
+            accountId: account.id,
+            auth_created: true,
+            createdFrom: 'account-management'
+          })
+
+          await setDoc(doc(db, COLLECTIONS.PATIENTS, canonicalPatientId), {
+            patient_id: canonicalPatientId,
+            user_id: canonicalPatientId,
+            auth_uid: user.uid,
+            first_name,
+            middle_name,
+            last_name,
+            email: account.generated_email,
+            role: account.role,
+            contact_number: '',
+            address: '',
+            created_at: Timestamp.now(),
+            updated_at: Timestamp.now(),
+            is_active: true,
+            status: 'active',
+            emailVerified: true,
+            accountId: account.id,
+            auth_created: true,
+            createdFrom: 'account-management'
+          }, { merge: true })
+        } else {
+          const legacyPatientData = legacyPatientDoc.data() as Record<string, any>
+
+          await setDoc(doc(db, 'users', canonicalPatientId), {
+            ...legacyPatientData,
+            uid: canonicalPatientId,
+            user_id: canonicalPatientId,
+            auth_uid: user.uid,
+            accountId: legacyPatientData.accountId || account.id,
+            is_active: true,
+            status: 'active',
+            auth_created: true,
+            emailVerified: true,
+            verified: true,
+            updated_at: Timestamp.now()
+          }, { merge: true })
+
+          await updatePatientRecordsWithNewId(legacyPatientDoc.id, user.uid, account.role)
+
+          console.log(`✅ Rehydrated patient-only record ${legacyPatientDoc.id} into users/${canonicalPatientId} and patients/${canonicalPatientId}`)
+        }
       } else {
         console.warn('⚠️ No existing user found with accountId:', account.id)
         // Fallback: create minimal user record with Firebase Auth UID as document ID
@@ -476,6 +807,66 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
         throw updateError
       }
 
+      if (isPatientAccount) {
+        const canonicalPatientId = normalizePatientDocumentId(user.uid)
+        const legacyPatientDoc = await findExistingPatientDocForAccount(account)
+        const legacyPatientData = legacyPatientDoc?.data() as Record<string, any> | undefined
+        const nameParts = account.name.split(' ').filter(part => part.trim() !== '')
+        const first_name = nameParts[0] || ''
+        const middle_name = nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : ''
+        const last_name = nameParts.length > 1 ? nameParts[nameParts.length - 1] : ''
+
+        await setDoc(doc(db, 'users', canonicalPatientId), {
+          uid: canonicalPatientId,
+          user_id: canonicalPatientId,
+          auth_uid: user.uid,
+          first_name: first_name,
+          middle_name: middle_name,
+          last_name: last_name,
+          email: account.generated_email,
+          role: account.role,
+          contact_number: '',
+          address: '',
+          birthdate: legacyPatientData?.birthdate || legacyPatientData?.birthday,
+          birthday: legacyPatientData?.birthdate || legacyPatientData?.birthday,
+          gender: legacyPatientData?.gender,
+          created_at: Timestamp.now(),
+          updated_at: Timestamp.now(),
+          is_active: true,
+          status: 'active',
+          emailVerified: true,
+          accountId: account.id,
+          auth_created: true,
+          createdFrom: 'account-management'
+        })
+
+        await setDoc(doc(db, COLLECTIONS.PATIENTS, canonicalPatientId), {
+          patient_id: canonicalPatientId,
+          user_id: canonicalPatientId,
+          auth_uid: user.uid,
+          first_name: first_name,
+          middle_name: middle_name,
+          last_name: last_name,
+          email: account.generated_email,
+          role: account.role,
+          contact_number: '',
+          address: '',
+          birthdate: legacyPatientData?.birthdate || legacyPatientData?.birthday,
+          birthday: legacyPatientData?.birthdate || legacyPatientData?.birthday,
+          gender: legacyPatientData?.gender,
+          created_at: Timestamp.now(),
+          updated_at: Timestamp.now(),
+          is_active: true,
+          status: 'active',
+          emailVerified: true,
+          accountId: account.id,
+          auth_created: true,
+          createdFrom: 'account-management'
+        }, { merge: true })
+
+        console.log(`✅ Fallback patient record written using canonical ID: ${canonicalPatientId}`)
+      }
+
       // Fallback to original behavior if update fails
       const nameParts = account.name.split(' ').filter(part => part.trim() !== '')
       const first_name = nameParts[0] || ''
@@ -513,7 +904,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
     
     console.log('Firebase Auth user created and linked successfully - document ID matches Firebase Auth UID:', user.uid)
 
-    await cleanupLegacyUserDocsForAccount(account, user.uid)
+    await cleanupLegacyUserDocsForAccount(account, canonicalPatientId)
     
     // Clean up any duplicate user records (keep only the original user record)
     await cleanupDuplicateUsers(account.id)

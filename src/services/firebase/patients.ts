@@ -16,6 +16,7 @@ import { db } from '@/lib/firebase';
 import { COLLECTIONS } from './collections';
 import { Patient, Caregiver } from '@/types';
 import { updateCaregiverPatientCount } from './caregivers';
+import { normalizePatientDocumentId } from './patientRecordSync';
 
 const generateLettersOnlyId = (prefix = 'patient', length = 12) => {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz';
@@ -71,6 +72,8 @@ export const getPatients = async (): Promise<Patient[]> => {
             first_name: userData.first_name || patientData.first_name,
             last_name: userData.last_name || patientData.last_name,
             birthday: userData.birthday || patientData.birthday,
+            birthdate: userData.birthdate || patientData.birthdate,
+            gender: userData.gender || patientData.gender,
             email: userData.email || patientData.email,
             contact_number: userData.contact_number || patientData.contact_number,
             address: userData.address || patientData.address,
@@ -175,7 +178,10 @@ export const getPatient = async (patientId: string): Promise<Patient | null> => 
         last_name: userData.last_name,
         email: userData.email,
         contact_number: userData.contact_number,
-        address: userData.address
+        address: userData.address,
+        birthday: userData.birthday || userData.birthdate || patientData.birthday,
+        birthdate: userData.birthdate || userData.birthday,
+        gender: userData.gender
       })
     } as Patient;
     
@@ -197,7 +203,7 @@ export const addPatientWithAuth = async (
     let unifiedDocId: string;
     
     if (firebaseAuthUid) {
-      unifiedDocId = firebaseAuthUid;
+      unifiedDocId = normalizePatientDocumentId(firebaseAuthUid);
       console.log(`🔗 Using provided Firebase Auth UID as unified ID: ${unifiedDocId}`);
     } else {
       // Generate a new unified ID if no Auth UID provided
@@ -216,8 +222,16 @@ export const addPatientWithAuth = async (
         email: patient.email || '',
         role: 'Patient',
         contact_number: patient.contact_number?.toString() || '',
-        address: patient.address || ''
+        address: patient.address || '',
+        birthdate: patient.birthdate,
+        gender: patient.gender
       });
+
+      if (firebaseAuthUid) {
+        await updateDoc(doc(db, 'users', unifiedDocId), {
+          auth_uid: firebaseAuthUid
+        });
+      }
       
       console.log(`✅ Created core user document for patient ${patient.first_name} ${patient.last_name}:`);
       console.log(`📄 User Document ID: ${unifiedDocId}`);
@@ -237,6 +251,10 @@ export const addPatientWithAuth = async (
         updated_at: Timestamp.now(),
         is_active: true
       };
+
+      if (firebaseAuthUid) {
+        patientSpecificData.auth_uid = firebaseAuthUid;
+      }
 
       // Only add patient-specific fields if they have values
       if (patient.assigned_caregiver_id) patientSpecificData.assigned_caregiver_id = patient.assigned_caregiver_id;
@@ -371,7 +389,9 @@ export const addPatient = async (patient: Omit<Patient, 'patient_id'>): Promise<
         email: patient.email || '',
         role: 'Patient',
         contact_number: patient.contact_number?.toString() || '',
-        address: patient.address || ''
+        address: patient.address || '',
+        birthdate: patient.birthdate,
+        gender: patient.gender
       });
       
       console.log(`✅ Created core user document for patient ${patient.first_name} ${patient.last_name}:`);
@@ -488,12 +508,28 @@ export const updatePatient = async (patientId: string, updates: Partial<Omit<Pat
     
     // Categorize updates
     Object.entries(updates).forEach(([key, value]) => {
-      if (['first_name', 'last_name', 'email', 'contact_number', 'address'].includes(key)) {
+      if (['first_name', 'last_name', 'email', 'contact_number', 'address', 'birthdate', 'birthday', 'gender'].includes(key)) {
         userUpdates[key] = value;
       } else {
         patientUpdates[key] = value;
       }
     });
+
+    const normalizedBirthdate = typeof updates.birthdate === 'string'
+      ? updates.birthdate
+      : (typeof updates.birthday === 'string' ? updates.birthday : '');
+
+    if (normalizedBirthdate) {
+      userUpdates.birthdate = normalizedBirthdate;
+      userUpdates.birthday = normalizedBirthdate;
+      patientUpdates.birthdate = normalizedBirthdate;
+      patientUpdates.birthday = normalizedBirthdate;
+    }
+
+    if (updates.gender) {
+      userUpdates.gender = updates.gender;
+      patientUpdates.gender = updates.gender;
+    }
     
     // Update user document if there are user-level changes
     if (Object.keys(userUpdates).length > 0 && currentPatient.patient_id) {
@@ -724,6 +760,8 @@ export const getPatientsByCaregiver = async (caregiverId: string): Promise<Patie
             email: userData.email || patientData.email,
             contact_number: userData.contact_number || patientData.contact_number,
             address: userData.address || patientData.address,
+            birthdate: userData.birthdate || userData.birthday || patientData.birthdate,
+            gender: userData.gender || patientData.gender,
             is_active: userData.is_active !== undefined ? userData.is_active : patientData.is_active,
             // Keep user_id reference for linking
             user_id: userData.user_id || userData.id || patientData.user_id
@@ -764,6 +802,7 @@ export const getPatientsByCaregiver = async (caregiverId: string): Promise<Patie
 export const autoSyncPatientWithAuthUID = async (patientEmail: string, firebaseAuthUID: string): Promise<void> => {
   try {
     console.log(`🔄 Auto-syncing patient with email ${patientEmail} to Firebase Auth UID ${firebaseAuthUID}`);
+    const canonicalPatientId = normalizePatientDocumentId(firebaseAuthUID);
     
     // Step 1: Find the patient by email
     const patientsQuery = query(
@@ -786,7 +825,7 @@ export const autoSyncPatientWithAuthUID = async (patientEmail: string, firebaseA
     console.log(`📋 Found patient ${currentPatientId} with email ${patientEmail}`);
     
     // If the patient already has the correct ID, no need to sync
-    if (currentPatientId === firebaseAuthUID) {
+    if (currentPatientId === canonicalPatientId) {
       console.log(`✅ Patient ${currentPatientId} already synced with Firebase Auth UID`);
       return;
     }
@@ -796,36 +835,62 @@ export const autoSyncPatientWithAuthUID = async (patientEmail: string, firebaseA
     
     let existingUser = null;
     try {
-      existingUser = await getUserById(firebaseAuthUID);
+      existingUser = await getUserById(currentPatientId);
     } catch (error) {
       console.log('User does not exist yet, will create new one');
     }
     
     if (!existingUser) {
-      await createUserWithId(firebaseAuthUID, {
+      await createUserWithId(canonicalPatientId, {
         first_name: patientData.first_name || '',
         last_name: patientData.last_name || '',
         email: patientData.email || '',
         role: 'Patient',
         contact_number: patientData.contact_number?.toString() || '',
-        address: patientData.address || ''
+        address: patientData.address || '',
+        birthdate: patientData.birthdate || patientData.birthday,
+        gender: patientData.gender
+      });
+      await updateDoc(doc(db, 'users', canonicalPatientId), {
+        auth_uid: firebaseAuthUID
       });
       console.log(`✅ Created user entity with Firebase Auth UID: ${firebaseAuthUID}`);
     } else {
+      const { id: existingUserId, ...existingUserData } = existingUser as any;
+
+      if (existingUserId !== canonicalPatientId) {
+        await setDoc(doc(db, 'users', canonicalPatientId), {
+          ...existingUserData,
+          uid: canonicalPatientId,
+          user_id: canonicalPatientId,
+          auth_uid: firebaseAuthUID,
+          updated_at: Timestamp.now()
+        }, { merge: true });
+
+        await deleteDoc(doc(db, 'users', existingUserId));
+        console.log(`✅ Re-keyed user entity from ${existingUserId} to ${canonicalPatientId}`);
+      } else {
+        await updateDoc(doc(db, 'users', canonicalPatientId), {
+          auth_uid: firebaseAuthUID,
+          updated_at: Timestamp.now()
+        });
+      }
+
       console.log(`✅ User entity already exists with Firebase Auth UID: ${firebaseAuthUID}`);
     }
     
     // Step 3: Create new patient document with Firebase Auth UID (update patient entity)
     const newPatientData = {
       ...patientData,
-      patient_id: firebaseAuthUID,  // Patient entity now matches Firebase Auth UID
-      user_id: firebaseAuthUID,     // Links to user entity with same UID
+      patient_id: canonicalPatientId,
+      user_id: canonicalPatientId,
+      auth_uid: firebaseAuthUID,
       updated_at: Timestamp.now()
     };
     
-    const newPatientRef = doc(db, COLLECTIONS.PATIENTS, firebaseAuthUID);
+    const newPatientRef = doc(db, COLLECTIONS.PATIENTS, canonicalPatientId);
     await setDoc(newPatientRef, newPatientData);
-    console.log(`✅ Updated patient entity - document ID and patient_id now match Firebase Auth UID: ${firebaseAuthUID}`);
+    console.log(`✅ Updated patient entity - document ID and patient_id now use canonical patient ID: ${canonicalPatientId}`);
     
     // Step 4: Update all medical history records (recreate with new document IDs)
     const medicalHistoryQuery = query(
@@ -840,13 +905,12 @@ export const autoSyncPatientWithAuthUID = async (patientEmail: string, firebaseA
       const oldMedHistoryData = medHistoryDoc.data();
       const oldDocId = medHistoryDoc.id;
       
-      // Create new medical history document with Firebase Auth UID incorporated in document ID
-      // Use pattern: {firebaseAuthUID}_{timestamp} to ensure uniqueness
-      const newMedHistoryDocId = `${firebaseAuthUID}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Create new medical history document with the canonical patient-prefixed ID in the document ID
+      const newMedHistoryDocId = `${canonicalPatientId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       const newMedHistoryData = {
         ...oldMedHistoryData,
-        patient_id: firebaseAuthUID,  // Update patient_id to match Firebase Auth UID
+        patient_id: canonicalPatientId,
         updated_at: Timestamp.now(),
         migrated_from: oldDocId // Keep track of original document ID
       };
@@ -858,7 +922,7 @@ export const autoSyncPatientWithAuthUID = async (patientEmail: string, firebaseA
       // Delete the old medical history document
       await deleteDoc(doc(db, COLLECTIONS.MEDICAL_HISTORY, oldDocId));
       
-      console.log(`✅ Updated medical_history entity: ${oldDocId} → ${newMedHistoryDocId} (patient_id: ${firebaseAuthUID})`);
+      console.log(`✅ Updated medical_history entity: ${oldDocId} → ${newMedHistoryDocId} (patient_id: ${canonicalPatientId})`);
     });
     
     await Promise.all(medicalHistoryUpdates);
@@ -876,13 +940,12 @@ export const autoSyncPatientWithAuthUID = async (patientEmail: string, firebaseA
       const oldMedicationData = medicationDoc.data();
       const oldDocId = medicationDoc.id;
       
-      // Create new medication document with Firebase Auth UID incorporated in document ID
-      // Use pattern: {firebaseAuthUID}_{timestamp} to ensure uniqueness
-      const newMedicationDocId = `${firebaseAuthUID}_med_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Create new medication document with the canonical patient-prefixed ID in the document ID
+      const newMedicationDocId = `${canonicalPatientId}_med_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       const newMedicationData = {
         ...oldMedicationData,
-        patient_id: firebaseAuthUID,  // Update patient_id to match Firebase Auth UID
+        patient_id: canonicalPatientId,
         updated_at: new Date().toISOString(),
         migrated_from: oldDocId // Keep track of original document ID
       };
@@ -894,7 +957,7 @@ export const autoSyncPatientWithAuthUID = async (patientEmail: string, firebaseA
       // Delete the old medication document
       await deleteDoc(doc(db, COLLECTIONS.MEDICATIONS, oldDocId));
       
-      console.log(`✅ Updated medication entity: ${oldDocId} → ${newMedicationDocId} (patient_id: ${firebaseAuthUID})`);
+      console.log(`✅ Updated medication entity: ${oldDocId} → ${newMedicationDocId} (patient_id: ${canonicalPatientId})`);
     });
     
     await Promise.all(medicationUpdates);
@@ -914,17 +977,27 @@ export const autoSyncPatientWithAuthUID = async (patientEmail: string, firebaseA
     }
     
     // Step 7: Delete the old patient document
-    await deleteDoc(doc(db, COLLECTIONS.PATIENTS, currentPatientId));
+    if (currentPatientId !== canonicalPatientId) {
+      await deleteDoc(doc(db, COLLECTIONS.PATIENTS, currentPatientId));
+      try {
+        const oldUserDoc = await getUserById(currentPatientId);
+        if (oldUserDoc) {
+          await deleteDoc(doc(db, 'users', oldUserDoc.id));
+        }
+      } catch (userDeleteError) {
+        console.warn('Unable to delete legacy user document during patient auto-sync:', userDeleteError);
+      }
+    }
     console.log(`🗑️ Deleted old patient document: ${currentPatientId}`);
     
-    console.log(`🎉 Auto-sync complete! All entities now use Firebase Auth UID: ${firebaseAuthUID}`);
+    console.log(`🎉 Auto-sync complete! All entities now use canonical patient ID: ${canonicalPatientId}`);
     console.log(`📊 Entity Document ID Synchronization Summary:
-      ✅ User Entity: Document ID = ${firebaseAuthUID} (matches Firebase Auth UID)
-      ✅ Patient Entity: Document ID = ${firebaseAuthUID}, patient_id = ${firebaseAuthUID} (matches Firebase Auth UID)
-      ✅ Medical History Entities: ${medicalHistorySnapshot.docs.length} records recreated with new document IDs containing ${firebaseAuthUID}
-      ✅ Medication Entities: ${medicationsSnapshot.docs.length} records recreated with new document IDs containing ${firebaseAuthUID}
+      ✅ User Entity: Document ID = ${canonicalPatientId} (keeps patient prefix)
+      ✅ Patient Entity: Document ID = ${canonicalPatientId}, patient_id = ${canonicalPatientId}
+      ✅ Medical History Entities: ${medicalHistorySnapshot.docs.length} records recreated with new document IDs containing ${canonicalPatientId}
+      ✅ Medication Entities: ${medicationsSnapshot.docs.length} records recreated with new document IDs containing ${canonicalPatientId}
       
-      🔗 All entities now have document IDs and fields synchronized with Firebase Auth UID: ${firebaseAuthUID}
+      🔗 All entities now have document IDs and fields synchronized with canonical patient ID: ${canonicalPatientId}
       📋 Old documents have been deleted and replaced with new ones using the Firebase Auth UID`);
     
   } catch (error) {
@@ -957,6 +1030,7 @@ export const onPatientAuthAccountCreated = async (user: any): Promise<void> => {
 export const verifyPatientEntitySync = async (firebaseAuthUID: string): Promise<{ synced: boolean; details: any }> => {
   try {
     console.log(`🔍 Verifying entity synchronization for Firebase Auth UID: ${firebaseAuthUID}`);
+    const canonicalPatientId = normalizePatientDocumentId(firebaseAuthUID);
     
     const results = {
       userEntity: null as any,
@@ -977,28 +1051,28 @@ export const verifyPatientEntitySync = async (firebaseAuthUID: string): Promise<
     // Check user entity
     try {
       const { getUserById } = await import('./users');
-      results.userEntity = await getUserById(firebaseAuthUID);
+      results.userEntity = await getUserById(canonicalPatientId);
       results.details.userEntityExists = true;
-      console.log(`✅ User entity found with UID: ${firebaseAuthUID}`);
+      console.log(`✅ User entity found with canonical ID: ${canonicalPatientId}`);
     } catch (error) {
-      console.log(`❌ User entity NOT found with UID: ${firebaseAuthUID}`);
+      console.log(`❌ User entity NOT found with canonical ID: ${canonicalPatientId}`);
     }
     
     // Check patient entity
     try {
-      const patientDoc = await getDoc(doc(db, COLLECTIONS.PATIENTS, firebaseAuthUID));
+      const patientDoc = await getDoc(doc(db, COLLECTIONS.PATIENTS, canonicalPatientId));
       if (patientDoc.exists()) {
         const patientData = patientDoc.data();
         results.patientEntity = patientData;
         results.details.patientEntityExists = true;
-        results.details.patientIdMatches = patientData.patient_id === firebaseAuthUID;
-        results.details.userIdMatches = patientData.user_id === firebaseAuthUID;
-        console.log(`✅ Patient entity found with UID: ${firebaseAuthUID}`);
+        results.details.patientIdMatches = patientData.patient_id === canonicalPatientId;
+        results.details.userIdMatches = patientData.user_id === canonicalPatientId;
+        console.log(`✅ Patient entity found with canonical ID: ${canonicalPatientId}`);
         console.log(`   - Document ID: ${patientDoc.id}`);
         console.log(`   - patient_id: ${patientData.patient_id}`);
         console.log(`   - user_id: ${patientData.user_id}`);
       } else {
-        console.log(`❌ Patient entity NOT found with UID: ${firebaseAuthUID}`);
+        console.log(`❌ Patient entity NOT found with canonical ID: ${canonicalPatientId}`);
       }
     } catch (error) {
       console.log(`❌ Error checking patient entity: ${error}`);
@@ -1008,12 +1082,12 @@ export const verifyPatientEntitySync = async (firebaseAuthUID: string): Promise<
     try {
       const medHistQuery = query(
         collection(db, COLLECTIONS.MEDICAL_HISTORY),
-        where('patient_id', '==', firebaseAuthUID)
+        where('patient_id', '==', canonicalPatientId)
       );
       const medHistSnapshot = await getDocs(medHistQuery);
       results.medicalHistoryCount = medHistSnapshot.docs.length;
       results.details.medicalHistoryRecords = medHistSnapshot.docs.length;
-      console.log(`✅ Found ${results.medicalHistoryCount} medical history entities with patient_id: ${firebaseAuthUID}`);
+      console.log(`✅ Found ${results.medicalHistoryCount} medical history entities with patient_id: ${canonicalPatientId}`);
     } catch (error) {
       console.log(`❌ Error checking medical history entities: ${error}`);
     }
@@ -1022,12 +1096,12 @@ export const verifyPatientEntitySync = async (firebaseAuthUID: string): Promise<
     try {
       const medQuery = query(
         collection(db, COLLECTIONS.MEDICATIONS),
-        where('patient_id', '==', firebaseAuthUID)
+        where('patient_id', '==', canonicalPatientId)
       );
       const medSnapshot = await getDocs(medQuery);
       results.medicationCount = medSnapshot.docs.length;
       results.details.medicationRecords = medSnapshot.docs.length;
-      console.log(`✅ Found ${results.medicationCount} medication entities with patient_id: ${firebaseAuthUID}`);
+      console.log(`✅ Found ${results.medicationCount} medication entities with patient_id: ${canonicalPatientId}`);
     } catch (error) {
       console.log(`❌ Error checking medication entities: ${error}`);
     }
@@ -1056,6 +1130,7 @@ export const verifyPatientEntitySync = async (firebaseAuthUID: string): Promise<
 export const syncPatientWithFirebaseAuth = async (currentPatientId: string, firebaseAuthUid: string): Promise<void> => {
   try {
     console.log(`🔄 Syncing patient ${currentPatientId} with Firebase Auth UID ${firebaseAuthUid}`);
+    const canonicalPatientId = normalizePatientDocumentId(firebaseAuthUid);
     
     // Step 1: Get the existing patient data
     const currentPatientRef = doc(db, COLLECTIONS.PATIENTS, currentPatientId);
@@ -1074,37 +1149,63 @@ export const syncPatientWithFirebaseAuth = async (currentPatientId: string, fire
     // Check if user already exists with this UID
     let existingUser = null;
     try {
-      existingUser = await getUserById(firebaseAuthUid);
+      existingUser = await getUserById(currentPatientId);
     } catch (error) {
       console.log('User does not exist yet, will create new one');
     }
     
     if (!existingUser) {
       // Create new user document with Firebase Auth UID
-      await createUserWithId(firebaseAuthUid, {
+      await createUserWithId(canonicalPatientId, {
         first_name: patientData.first_name || '',
         last_name: patientData.last_name || '',
         email: patientData.email || '',
         role: 'Patient',
         contact_number: patientData.contact_number?.toString() || '',
-        address: patientData.address || ''
+        address: patientData.address || '',
+        birthdate: patientData.birthdate || patientData.birthday,
+        gender: patientData.gender
+      });
+      await updateDoc(doc(db, 'users', canonicalPatientId), {
+        auth_uid: firebaseAuthUid
       });
       console.log(`✅ Created user document with Firebase Auth UID: ${firebaseAuthUid}`);
     } else {
+      const { id: existingUserId, ...existingUserData } = existingUser as any;
+
+      if (existingUserId !== canonicalPatientId) {
+        await setDoc(doc(db, 'users', canonicalPatientId), {
+          ...existingUserData,
+          uid: canonicalPatientId,
+          user_id: canonicalPatientId,
+          auth_uid: firebaseAuthUid,
+          updated_at: Timestamp.now()
+        }, { merge: true });
+
+        await deleteDoc(doc(db, 'users', existingUserId));
+        console.log(`✅ Re-keyed user document from ${existingUserId} to ${canonicalPatientId}`);
+      } else {
+        await updateDoc(doc(db, 'users', canonicalPatientId), {
+          auth_uid: firebaseAuthUid,
+          updated_at: Timestamp.now()
+        });
+      }
+
       console.log(`✅ User document already exists with Firebase Auth UID: ${firebaseAuthUid}`);
     }
     
     // Step 3: Create new patient document with Firebase Auth UID
     const newPatientData = {
       ...patientData,
-      patient_id: firebaseAuthUid,
-      user_id: firebaseAuthUid,
+      patient_id: canonicalPatientId,
+      user_id: canonicalPatientId,
+      auth_uid: firebaseAuthUid,
       updated_at: Timestamp.now()
     };
     
-    const newPatientRef = doc(db, COLLECTIONS.PATIENTS, firebaseAuthUid);
+    const newPatientRef = doc(db, COLLECTIONS.PATIENTS, canonicalPatientId);
     await setDoc(newPatientRef, newPatientData);
-    console.log(`✅ Created new patient document with Firebase Auth UID: ${firebaseAuthUid}`);
+    console.log(`✅ Created new patient document with canonical patient ID: ${canonicalPatientId}`);
     
     // Step 4: Update all medical history records
     const medicalHistoryQuery = query(
@@ -1118,10 +1219,10 @@ export const syncPatientWithFirebaseAuth = async (currentPatientId: string, fire
     const medicalHistoryUpdates = medicalHistorySnapshot.docs.map(async (medHistoryDoc) => {
       const medHistoryRef = doc(db, COLLECTIONS.MEDICAL_HISTORY, medHistoryDoc.id);
       await updateDoc(medHistoryRef, {
-        patient_id: firebaseAuthUid,
+        patient_id: canonicalPatientId,
         updated_at: Timestamp.now()
       });
-      console.log(`✅ Updated medical history record ${medHistoryDoc.id} to use patient_id: ${firebaseAuthUid}`);
+      console.log(`✅ Updated medical history record ${medHistoryDoc.id} to use patient_id: ${canonicalPatientId}`);
     });
     
     await Promise.all(medicalHistoryUpdates);
@@ -1138,16 +1239,26 @@ export const syncPatientWithFirebaseAuth = async (currentPatientId: string, fire
     const medicationUpdates = medicationsSnapshot.docs.map(async (medicationDoc) => {
       const medicationRef = doc(db, COLLECTIONS.MEDICATIONS, medicationDoc.id);
       await updateDoc(medicationRef, {
-        patient_id: firebaseAuthUid,
+        patient_id: canonicalPatientId,
         updated_at: new Date().toISOString()
       });
-      console.log(`✅ Updated medication record ${medicationDoc.id} to use patient_id: ${firebaseAuthUid}`);
+      console.log(`✅ Updated medication record ${medicationDoc.id} to use patient_id: ${canonicalPatientId}`);
     });
     
     await Promise.all(medicationUpdates);
     
     // Step 6: Delete the old patient document
-    await deleteDoc(currentPatientRef);
+    if (currentPatientId !== canonicalPatientId) {
+      await deleteDoc(currentPatientRef);
+      try {
+        const existingUserDoc = await getUserById(currentPatientId);
+        if (existingUserDoc) {
+          await deleteDoc(doc(db, 'users', existingUserDoc.id));
+        }
+      } catch (userDeleteError) {
+        console.warn('Unable to delete legacy user document during manual patient sync:', userDeleteError);
+      }
+    }
     console.log(`🗑️ Deleted old patient document: ${currentPatientId}`);
     
     // Step 7: Update caregiver assignments (if any)
@@ -1164,12 +1275,12 @@ export const syncPatientWithFirebaseAuth = async (currentPatientId: string, fire
       console.log(`✅ Updated caregiver patient counts for: ${caregiverIds.join(', ')}`);
     }
     
-    console.log(`🎉 Successfully synced patient ${currentPatientId} with Firebase Auth UID ${firebaseAuthUid}`);
+    console.log(`🎉 Successfully synced patient ${currentPatientId} with canonical patient ID ${canonicalPatientId}`);
     console.log(`📊 Summary:
-      - Patient document: Moved from ${currentPatientId} to ${firebaseAuthUid}
+      - Patient document: Moved from ${currentPatientId} to ${canonicalPatientId}
       - Medical history records updated: ${medicalHistorySnapshot.docs.length}
       - Medication records updated: ${medicationsSnapshot.docs.length}
-      - User document: Created/Updated with UID ${firebaseAuthUid}`);
+      - User document: Created/Updated with ID ${canonicalPatientId}`);
     
   } catch (error) {
     console.error('Error syncing patient with Firebase Auth:', error);
@@ -1180,7 +1291,8 @@ export const syncPatientWithFirebaseAuth = async (currentPatientId: string, fire
 // Update patient and related medical records to use unified document ID
 export const updatePatientToUnifiedId = async (oldPatientId: string, newUserId: string): Promise<void> => {
   try {
-    console.log(`🔄 Updating patient ${oldPatientId} to unified ID ${newUserId}`);
+    const canonicalPatientId = normalizePatientDocumentId(newUserId);
+    console.log(`🔄 Updating patient ${oldPatientId} to unified ID ${canonicalPatientId}`);
     
     // Step 1: Get the existing patient data
     const oldPatientRef = doc(db, COLLECTIONS.PATIENTS, oldPatientId);
@@ -1197,14 +1309,15 @@ export const updatePatientToUnifiedId = async (oldPatientId: string, newUserId: 
     // Step 2: Create new patient document with unified ID
     const newPatientData = {
       ...patientData,
-      patient_id: newUserId,
-      user_id: newUserId,
+      patient_id: canonicalPatientId,
+      user_id: canonicalPatientId,
+      auth_uid: newUserId,
       updated_at: Timestamp.now()
     };
     
-    const newPatientRef = doc(db, COLLECTIONS.PATIENTS, newUserId);
+    const newPatientRef = doc(db, COLLECTIONS.PATIENTS, canonicalPatientId);
     await setDoc(newPatientRef, newPatientData);
-    console.log(`✅ Created new patient document with unified ID: ${newUserId}`);
+    console.log(`✅ Created new patient document with unified ID: ${canonicalPatientId}`);
     
     // Step 3: Update medical history records
     const medicalHistoryQuery = query(
@@ -1218,7 +1331,7 @@ export const updatePatientToUnifiedId = async (oldPatientId: string, newUserId: 
     const medicalHistoryUpdates = medicalHistorySnapshot.docs.map(async (medHistoryDoc) => {
       const medHistoryRef = doc(db, COLLECTIONS.MEDICAL_HISTORY, medHistoryDoc.id);
       await updateDoc(medHistoryRef, {
-        patient_id: newUserId,
+        patient_id: canonicalPatientId,
         updated_at: Timestamp.now()
       });
       console.log(`✅ Updated medical history record ${medHistoryDoc.id}`);
@@ -1238,7 +1351,7 @@ export const updatePatientToUnifiedId = async (oldPatientId: string, newUserId: 
     const medicationUpdates = medicationsSnapshot.docs.map(async (medicationDoc) => {
       const medicationRef = doc(db, COLLECTIONS.MEDICATIONS, medicationDoc.id);
       await updateDoc(medicationRef, {
-        patient_id: newUserId,
+        patient_id: canonicalPatientId,
         updated_at: new Date().toISOString()
       });
       console.log(`✅ Updated medication record ${medicationDoc.id}`);
@@ -1250,7 +1363,7 @@ export const updatePatientToUnifiedId = async (oldPatientId: string, newUserId: 
     await deleteDoc(oldPatientRef);
     console.log(`🗑️ Deleted old patient document: ${oldPatientId}`);
     
-    console.log(`🎉 Successfully updated patient ${oldPatientId} to unified ID ${newUserId}`);
+    console.log(`🎉 Successfully updated patient ${oldPatientId} to unified ID ${canonicalPatientId}`);
     console.log(`📊 Updated records:
       - Patient document: ✅
       - Medical history records: ${medicalHistorySnapshot.docs.length}

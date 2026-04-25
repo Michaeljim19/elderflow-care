@@ -20,6 +20,7 @@ import {
 import { auth, db } from '@/lib/firebase';
 import { COLLECTIONS } from './collections';
 import { Caregiver, ShiftType, getMaxPatientsForShift, User } from '@/types';
+import { buildApprovedCaregiverState, buildCaregiverAddressFields } from './caregiverRecordSync';
 
 // Generate a temporary password for new users
 const generateTemporaryPassword = (): string => {
@@ -52,7 +53,9 @@ export const createUser = async (userData: {
   email?: string;
   role: 'Patient' | 'Caregiver' | 'Admin' | 'Guardian';
   contact_number: string;
-  address: string;
+  address: string | Record<string, any>;
+  birthdate?: string;
+  gender?: 'Male' | 'Female' | 'Other';
   middle_name?: string;
   birthday?: string;
 }) => {
@@ -60,6 +63,8 @@ export const createUser = async (userData: {
     console.log('Creating user document (no auth):', userData);
 
     const documentId = doc(collection(db, 'users')).id;
+    const isCaregiverRole = String(userData.role || '').toLowerCase() === 'caregiver';
+    const addressFields = isCaregiverRole ? buildCaregiverAddressFields(userData.address) : null;
     
     // Create user document in Firestore - ONLY core user data
     const coreUserData: any = {
@@ -70,15 +75,31 @@ export const createUser = async (userData: {
       email: userData.email || '',
       role: userData.role,
       contact_number: userData.contact_number,
-      address: userData.address,
+      address: addressFields ? JSON.stringify(addressFields.address) : userData.address,
       created_at: Timestamp.now(),
       updated_at: Timestamp.now(),
       is_active: true
     };
 
+    if (addressFields) {
+      coreUserData.province = addressFields.province;
+      coreUserData.city = addressFields.city;
+      coreUserData.city_municipality = addressFields.city_municipality;
+      coreUserData.barangay = addressFields.barangay;
+      coreUserData.street = addressFields.street;
+      coreUserData.street_address = addressFields.street_address;
+    }
+
+    const birthdateValue = userData.birthdate || userData.birthday;
+    if (birthdateValue) {
+      coreUserData.birthdate = birthdateValue;
+      coreUserData.birthday = birthdateValue;
+    }
+
+    if (userData.gender) coreUserData.gender = userData.gender;
+
     // Only add optional fields if they have values
     if (userData.middle_name) coreUserData.middle_name = userData.middle_name;
-    if (userData.birthday) coreUserData.birthday = userData.birthday;
     
     // Save to users collection using the generated document ID
     const userDocRef = doc(db, 'users', documentId);
@@ -114,13 +135,17 @@ export const createUserWithId = async (
     email?: string;
     role: 'Patient' | 'Caregiver' | 'Admin' | 'Guardian';
     contact_number: string;
-    address: string;
+    address: string | Record<string, any>;
+    birthdate?: string;
+    gender?: 'Male' | 'Female' | 'Other';
     middle_name?: string;
     birthday?: string;
   }
 ) => {
   try {
     console.log('Creating user document with specific ID:', documentId, userData);
+    const isCaregiverRole = String(userData.role || '').toLowerCase() === 'caregiver';
+    const addressFields = isCaregiverRole ? buildCaregiverAddressFields(userData.address) : null;
     
     // Create user document in Firestore with specific ID - ONLY core user data
     const coreUserData: any = {
@@ -131,15 +156,31 @@ export const createUserWithId = async (
       email: userData.email || '',
       role: userData.role,
       contact_number: userData.contact_number,
-      address: userData.address,
+      address: addressFields ? JSON.stringify(addressFields.address) : userData.address,
       created_at: Timestamp.now(),
       updated_at: Timestamp.now(),
       is_active: true
     };
 
+    if (addressFields) {
+      coreUserData.province = addressFields.province;
+      coreUserData.city = addressFields.city;
+      coreUserData.city_municipality = addressFields.city_municipality;
+      coreUserData.barangay = addressFields.barangay;
+      coreUserData.street = addressFields.street;
+      coreUserData.street_address = addressFields.street_address;
+    }
+
+    const birthdateValue = userData.birthdate || userData.birthday;
+    if (birthdateValue) {
+      coreUserData.birthdate = birthdateValue;
+      coreUserData.birthday = birthdateValue;
+    }
+
+    if (userData.gender) coreUserData.gender = userData.gender;
+
     // Only add optional fields if they have values
     if (userData.middle_name) coreUserData.middle_name = userData.middle_name;
-    if (userData.birthday) coreUserData.birthday = userData.birthday;
     
     // Save to users collection with specific document ID
     const userDocRef = doc(db, 'users', documentId);
@@ -169,8 +210,12 @@ const cleanupLegacyCaregiverDocsForAccount = async (caregiverData: any, canonica
   try {
     const caregiversRef = collection(db, 'caregivers');
     const candidateQueries = [
-      query(caregiversRef, where('email', '==', caregiverData.email)),
-      query(caregiversRef, where('first_name', '==', caregiverData.first_name), where('last_name', '==', caregiverData.last_name))
+      ...(caregiverData.email ? [query(caregiversRef, where('email', '==', caregiverData.email))] : []),
+      ...(caregiverData.generated_email ? [query(caregiversRef, where('generated_email', '==', caregiverData.generated_email))] : []),
+      ...(caregiverData.caregiver_id ? [query(caregiversRef, where('caregiver_id', '==', caregiverData.caregiver_id))] : []),
+      ...(caregiverData.user_id ? [query(caregiversRef, where('user_id', '==', caregiverData.user_id))] : []),
+      ...(caregiverData.uid ? [query(caregiversRef, where('uid', '==', caregiverData.uid))] : []),
+      ...(caregiverData.auth_uid ? [query(caregiversRef, where('auth_uid', '==', caregiverData.auth_uid))] : [])
     ];
 
     const documentIdsToDelete = new Set<string>();
@@ -202,8 +247,6 @@ const cleanupLegacyUserDocsForCaregiver = async (caregiverData: any, canonicalUs
   try {
     const usersRef = collection(db, 'users');
     const documentIdsToDelete = new Set<string>();
-    const firstName = String(caregiverData.first_name || '').trim().toLowerCase();
-    const lastName = String(caregiverData.last_name || '').trim().toLowerCase();
     const emailValue = String(caregiverData.email || caregiverData.generated_email || '').trim().toLowerCase();
     const phoneValue = String(caregiverData.contact_number || caregiverData.phone || '').replace(/\D/g, '');
     const birthdayValue = String(caregiverData.birthday || '').trim();
@@ -238,7 +281,6 @@ const cleanupLegacyUserDocsForCaregiver = async (caregiverData: any, canonicalUs
             : ''
       ).trim().toLowerCase();
 
-      const matchesName = firstName && lastName && docFirstName === firstName && docLastName === lastName;
       const matchesEmail = emailValue && (docEmail === emailValue || docGeneratedEmail === emailValue);
       const matchesPhone = phoneValue && docPhone === phoneValue;
       const matchesBirthday = birthdayValue && docBirthday === birthdayValue;
@@ -246,7 +288,7 @@ const cleanupLegacyUserDocsForCaregiver = async (caregiverData: any, canonicalUs
       const matchesAddress = addressValue && docAddress === addressValue;
       const looksLikeLegacyCaregiver = docCreatedFrom === 'caregiver_signup' || docRole === 'caregiver' || String(data.user_lvl || '').trim().toLowerCase() === 'caregiver';
 
-      const legacyScore = [matchesName, matchesEmail, matchesPhone, matchesBirthday, matchesLicense, matchesAddress]
+        const legacyScore = [matchesEmail, matchesPhone, matchesBirthday, matchesLicense, matchesAddress]
         .filter(Boolean)
         .length;
 
@@ -325,6 +367,9 @@ export const createCaregiverUserAccount = async (caregiverData: any) => {
     await updateProfile(user, {
       displayName: `${caregiverData.first_name} ${caregiverData.last_name}`
     });
+
+    const addressFields = buildCaregiverAddressFields(caregiverData);
+    const approvedCaregiverState = buildApprovedCaregiverState();
     
     // Create user document in Firestore with all caregiver data
     // Filter out undefined values to prevent Firestore errors
@@ -345,6 +390,7 @@ export const createCaregiverUserAccount = async (caregiverData: any) => {
       created_at: Timestamp.now(),
       updated_at: Timestamp.now(),
       is_active: true,
+      ...approvedCaregiverState,
       auth_created: true
     };
 
@@ -355,7 +401,13 @@ export const createCaregiverUserAccount = async (caregiverData: any) => {
       userData.phone = caregiverData.contact_number?.toString();
       userData.contact_number = caregiverData.contact_number;
     }
-    if (caregiverData.address) userData.address = caregiverData.address;
+    userData.address = JSON.stringify(addressFields.address);
+    userData.province = addressFields.province;
+    userData.city = addressFields.city;
+    userData.city_municipality = addressFields.city_municipality;
+    userData.barangay = addressFields.barangay;
+    userData.street = addressFields.street;
+    userData.street_address = addressFields.street_address;
     if (caregiverData.shift_type) userData.shift_type = caregiverData.shift_type;
     if (caregiverData.shift_start_date) userData.shift_start_date = caregiverData.shift_start_date;
     if (caregiverData.shift_end_date) userData.shift_end_date = caregiverData.shift_end_date;
@@ -376,7 +428,13 @@ export const createCaregiverUserAccount = async (caregiverData: any) => {
       last_name: caregiverData.last_name,
       email: user.email,
       contact_number: caregiverData.contact_number || '',
-      address: caregiverData.address || '',
+      address: addressFields.address,
+      province: addressFields.province,
+      city: addressFields.city,
+      city_municipality: addressFields.city_municipality,
+      barangay: addressFields.barangay,
+      street: addressFields.street,
+      street_address: addressFields.street_address,
       birthday: caregiverData.birthday || '',
       shift_type: caregiverData.shift_type || '',
       shift_start_date: caregiverData.shift_start_date || null,
@@ -394,6 +452,7 @@ export const createCaregiverUserAccount = async (caregiverData: any) => {
       created_at: Timestamp.now(),
       updated_at: Timestamp.now(),
       is_active: true,
+      ...approvedCaregiverState,
       auth_created: true
     });
 
@@ -466,7 +525,18 @@ export const getUserById = async (userId: string): Promise<(User & { id: string 
     const userDoc = await getDoc(doc(db, 'users', userId));
     
     if (!userDoc.exists()) {
-      return null;
+      const authUidQuery = query(collection(db, 'users'), where('auth_uid', '==', userId));
+      const authUidSnapshot = await getDocs(authUidQuery);
+
+      if (authUidSnapshot.empty) {
+        return null;
+      }
+
+      const matchedDoc = authUidSnapshot.docs[0];
+      return {
+        id: matchedDoc.id,
+        ...matchedDoc.data()
+      } as User & { id: string };
     }
     
     return {
