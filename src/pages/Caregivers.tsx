@@ -123,6 +123,14 @@ const Caregivers = () => {
     return tomorrow.toISOString().split('T')[0];
   };
 
+  const isNewlyRegisteredCaregiver = (caregiver: Caregiver | null): boolean => {
+    if (!caregiver) {
+      return false
+    }
+
+    return (caregiver.status || '').toString().trim().toLowerCase() === 'pending'
+  }
+
   // Helper function to check if license image is valid
   const isValidLicenseImage = (licenseUrl?: string): boolean => {
     if (!licenseUrl) return false;
@@ -1323,9 +1331,20 @@ const Caregivers = () => {
   const handleUpdate = async () => {
     if (!editingCaregiver) return
 
+    const isLimitedEditMode = isNewlyRegisteredCaregiver(editingCaregiver)
+
     const normalizedContactNumber = normalizePhilippineContactNumber(formData.contact_number)
-    
-    if (!formData.first_name || !formData.last_name || !formData.birthday || !formData.email || !formData.contact_number || !formData.shift_type || !formData.shift_start_date || !formData.address.province || !formData.address.city_municipality || !formData.address.barangay || !formData.address.street) {
+
+    if (isLimitedEditMode) {
+      if (!formData.shift_type || !formData.shift_start_date || !formData.contract_start_date || !formData.contract_end_date) {
+        toast({
+          title: "Validation Error",
+          description: "Please provide shift details and contract start/end dates.",
+          variant: "destructive"
+        })
+        return
+      }
+    } else if (!formData.first_name || !formData.last_name || !formData.birthday || !formData.email || !formData.contact_number || !formData.shift_type || !formData.shift_start_date || !formData.address.province || !formData.address.city_municipality || !formData.address.barangay || !formData.address.street) {
       toast({
         title: "Validation Error",
         description: "Please fill in all required fields (marked with *).",
@@ -1334,7 +1353,7 @@ const Caregivers = () => {
       return
     }
 
-    if (!isValidPhilippineContactNumber(normalizedContactNumber)) {
+    if (!isLimitedEditMode && !isValidPhilippineContactNumber(normalizedContactNumber)) {
       toast({
         title: "Invalid Contact Number",
         description: "Enter a valid Philippine mobile number like 09XXXXXXXXX or +639XXXXXXXXX.",
@@ -1372,6 +1391,11 @@ const Caregivers = () => {
         barangay: formData.address?.barangay || "",
         street: formData.address?.street || ""
       }
+      const preservedAddress = normalizeAddressForEdit(editingCaregiver)
+      const normalizedExistingContactNumber = normalizePhilippineContactNumber(editingCaregiver.contact_number?.toString() || "")
+      const preservedContactNumber = isValidPhilippineContactNumber(normalizedExistingContactNumber)
+        ? Number(normalizedExistingContactNumber)
+        : (typeof editingCaregiver.contact_number === "number" ? editingCaregiver.contact_number : 0)
       
       // Debug logging for form data
       console.log('🔍 Edit caregiver form data:', {
@@ -1381,7 +1405,7 @@ const Caregivers = () => {
         original_shift_end_date: editingCaregiver.shift_end_date
       })
       
-      const updatedData = {
+      const fullUpdatedData = {
         first_name: formData.first_name,
         middle_name: formData.middle_name,
         last_name: formData.last_name,
@@ -1401,8 +1425,30 @@ const Caregivers = () => {
         contract_end_date: formData.contract_end_date
       }
 
+      const limitedUpdatedData = {
+        first_name: editingCaregiver.first_name || formData.first_name,
+        middle_name: editingCaregiver.middle_name || formData.middle_name,
+        last_name: editingCaregiver.last_name || formData.last_name,
+        birthday: editingCaregiver.birthday || formData.birthday,
+        email: editingCaregiver.email || formData.email,
+        contact_number: preservedContactNumber,
+        address: preservedAddress,
+        shift_type: formData.shift_type as "Day" | "Night",
+        shift_start_date: formData.shift_start_date ? dateToTimestamp(formData.shift_start_date) : editingCaregiver.shift_start_date,
+        shift_end_date: formData.shift_end_date ? dateToTimestamp(formData.shift_end_date) : editingCaregiver.shift_end_date,
+        role: (editingCaregiver.role || "Eldercare") as "Eldercare",
+        assigned_patients_count: editingCaregiver.assigned_patients_count ?? formData.assigned_patients_count,
+        max_patients: formData.shift_type ? getMaxPatientsForShift(formData.shift_type as "Day" | "Night") : editingCaregiver.max_patients,
+        license_number: editingCaregiver.license_number || formData.license_number,
+        license_picture: editingCaregiver.license_picture || formData.license_picture,
+        contract_start_date: formData.contract_start_date,
+        contract_end_date: formData.contract_end_date
+      }
+
+      const updatedData: any = isLimitedEditMode ? limitedUpdatedData : fullUpdatedData
+
       // If a new license file is selected, upload it and update the URL
-      if (licenseFile) {
+      if (!isLimitedEditMode && licenseFile) {
         try {
           console.log('Attempting Firebase Storage upload for edit...')
           const newLicenseUrl = await uploadCaregiverLicense(editingCaregiver.caregiver_id, licenseFile, setUploadProgress)
@@ -1651,6 +1697,8 @@ const Caregivers = () => {
         )
     }
   }
+
+  const isEditingNewlyRegistered = isNewlyRegisteredCaregiver(editingCaregiver)
 
   if (loading) {
     return (
@@ -2004,161 +2052,170 @@ const Caregivers = () => {
               <DialogHeader>
                 <DialogTitle>Edit Eldercare</DialogTitle>
                 <DialogDescription>
-                  Update the eldercare's information.
+                  {isEditingNewlyRegistered
+                    ? "For newly registered caregivers, only shift and contract dates can be edited."
+                    : "Update the eldercare's information."}
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="editFirstName">First Name *</Label>
-                    <Input 
-                      id="editFirstName" 
-                      placeholder="Enter first name"
-                      value={formData.first_name}
-                      onChange={(e) => handleInputChange("first_name", e.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="editLastName">Last Name *</Label>
-                    <Input 
-                      id="editLastName" 
-                      placeholder="Enter last name"
-                      value={formData.last_name}
-                      onChange={(e) => handleInputChange("last_name", e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="editMiddleName">Middle Name</Label>
-                    <Input 
-                      id="editMiddleName" 
-                      placeholder="Enter middle name"
-                      value={formData.middle_name}
-                      onChange={(e) => handleInputChange("middle_name", e.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="editBirthday">Birthday *</Label>
-                    <Input 
-                      id="editBirthday" 
-                      type="date"
-                      value={formData.birthday}
-                      onChange={(e) => handleInputChange("birthday", e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="editEmail">Email *</Label>
-                  <Input 
-                    id="editEmail" 
-                    type="email"
-                    placeholder="Enter email address"
-                    value={formData.email}
-                    onChange={(e) => handleInputChange("email", e.target.value)}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="editPhone">Contact Number *</Label>
-                  <Input 
-                    id="editPhone" 
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel"
-                    placeholder="09XXXXXXXXX or +639XXXXXXXXX"
-                    value={formData.contact_number}
-                    onChange={(e) => handleInputChange("contact_number", e.target.value)}
-                  />
-                </div>
-                
-                {/* Address Section with PSGC API */}
-                <div className="space-y-4">
-                  <Label className="text-sm font-medium">Address *</Label>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="editProvince">Province *</Label>
-                      <Select 
-                        value={formData.selectedProvinceCode || ""} 
-                        onValueChange={handleProvinceChange}
-                        disabled={loadingAddressData}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={loadingAddressData ? "Loading provinces..." : "Select province"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {provinces.filter(province => province.code && province.code.trim() !== '').map((province) => (
-                            <SelectItem key={province.code} value={province.code}>
-                              {province.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                {!isEditingNewlyRegistered && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="editFirstName">First Name *</Label>
+                        <Input
+                          id="editFirstName"
+                          placeholder="Enter first name"
+                          value={formData.first_name}
+                          onChange={(e) => handleInputChange("first_name", e.target.value)}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="editLastName">Last Name *</Label>
+                        <Input
+                          id="editLastName"
+                          placeholder="Enter last name"
+                          value={formData.last_name}
+                          onChange={(e) => handleInputChange("last_name", e.target.value)}
+                        />
+                      </div>
                     </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="editCity">City/Municipality *</Label>
-                      <Select 
-                        value={formData.selectedCityCode} 
-                        onValueChange={handleCityChange}
-                        disabled={loadingAddressData || !formData.selectedProvinceCode}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={
-                            !formData.selectedProvinceCode 
-                              ? "Select province first" 
-                              : loadingAddressData 
-                                ? "Loading cities..." 
-                                : "Select city/municipality"
-                          } />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {cities.filter(city => city.code && city.code.trim() !== '').map((city) => (
-                            <SelectItem key={city.code} value={city.code}>
-                              {city.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="editMiddleName">Middle Name</Label>
+                        <Input
+                          id="editMiddleName"
+                          placeholder="Enter middle name"
+                          value={formData.middle_name}
+                          onChange={(e) => handleInputChange("middle_name", e.target.value)}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="editBirthday">Birthday *</Label>
+                        <Input
+                          id="editBirthday"
+                          type="date"
+                          value={formData.birthday}
+                          onChange={(e) => handleInputChange("birthday", e.target.value)}
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
+
                     <div className="grid gap-2">
-                      <Label htmlFor="editBarangay">Barangay *</Label>
-                      <Select 
-                        value={formData.selectedBarangayCode} 
-                        onValueChange={handleBarangayChange}
-                        disabled={loadingAddressData || !formData.selectedCityCode}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={
-                            !formData.selectedCityCode 
-                              ? "Select city first" 
-                              : loadingAddressData 
-                                ? "Loading barangays..." 
-                                : "Select barangay"
-                          } />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {barangays.filter(barangay => barangay.code && barangay.code.trim() !== '').map((barangay) => (
-                            <SelectItem key={barangay.code} value={barangay.code}>
-                              {barangay.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="editStreet">Street *</Label>
-                      <Input 
-                        id="editStreet" 
-                        placeholder="Enter street address"
-                        value={formData.address.street}
-                        onChange={(e) => handleInputChange("address.street", e.target.value)}
+                      <Label htmlFor="editEmail">Email *</Label>
+                      <Input
+                        id="editEmail"
+                        type="email"
+                        placeholder="Enter email address"
+                        value={formData.email}
+                        onChange={(e) => handleInputChange("email", e.target.value)}
                       />
                     </div>
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="editPhone">Contact Number *</Label>
+                      <Input
+                        id="editPhone"
+                        type="tel"
+                        inputMode="numeric"
+                        autoComplete="tel"
+                        placeholder="09XXXXXXXXX or +639XXXXXXXXX"
+                        value={formData.contact_number}
+                        onChange={(e) => handleInputChange("contact_number", e.target.value)}
+                      />
+                    </div>
+
+                    <div className="space-y-4">
+                      <Label className="text-sm font-medium">Address *</Label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="grid gap-2">
+                          <Label htmlFor="editProvince">Province *</Label>
+                          <Select
+                            value={formData.selectedProvinceCode || ""}
+                            onValueChange={handleProvinceChange}
+                            disabled={loadingAddressData}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={loadingAddressData ? "Loading provinces..." : "Select province"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {provinces.filter(province => province.code && province.code.trim() !== '').map((province) => (
+                                <SelectItem key={province.code} value={province.code}>
+                                  {province.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="editCity">City/Municipality *</Label>
+                          <Select
+                            value={formData.selectedCityCode}
+                            onValueChange={handleCityChange}
+                            disabled={loadingAddressData || !formData.selectedProvinceCode}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={
+                                !formData.selectedProvinceCode
+                                  ? "Select province first"
+                                  : loadingAddressData
+                                    ? "Loading cities..."
+                                    : "Select city/municipality"
+                              } />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {cities.filter(city => city.code && city.code.trim() !== '').map((city) => (
+                                <SelectItem key={city.code} value={city.code}>
+                                  {city.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="grid gap-2">
+                          <Label htmlFor="editBarangay">Barangay *</Label>
+                          <Select
+                            value={formData.selectedBarangayCode}
+                            onValueChange={handleBarangayChange}
+                            disabled={loadingAddressData || !formData.selectedCityCode}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={
+                                !formData.selectedCityCode
+                                  ? "Select city first"
+                                  : loadingAddressData
+                                    ? "Loading barangays..."
+                                    : "Select barangay"
+                              } />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {barangays.filter(barangay => barangay.code && barangay.code.trim() !== '').map((barangay) => (
+                                <SelectItem key={barangay.code} value={barangay.code}>
+                                  {barangay.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="editStreet">Street *</Label>
+                          <Input
+                            id="editStreet"
+                            placeholder="Enter street address"
+                            value={formData.address.street}
+                            onChange={(e) => handleInputChange("address.street", e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <div className={`grid gap-4 ${isEditingNewlyRegistered ? "grid-cols-1" : "grid-cols-2"}`}>
                   <div className="grid gap-2">
                     <Label htmlFor="editShiftType">Shift Type *</Label>
                     <Select value={formData.shift_type || ""} onValueChange={(value) => handleInputChange("shift_type", value as "Day" | "Night")}>
@@ -2176,32 +2233,33 @@ const Caregivers = () => {
                       </div>
                     )}
                   </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="editRole">Role</Label>
-                    <Input 
-                      id="editRole" 
-                      value="Eldercare"
-                      disabled
-                      className="bg-muted"
-                    />
-                  </div>
+                  {!isEditingNewlyRegistered && (
+                    <div className="grid gap-2">
+                      <Label htmlFor="editRole">Role</Label>
+                      <Input
+                        id="editRole"
+                        value="Eldercare"
+                        disabled
+                        className="bg-muted"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
                     <Label htmlFor="editShiftStartDate">Shift Start Date *</Label>
-                    <Input 
-                      id="editShiftStartDate" 
+                    <Input
+                      id="editShiftStartDate"
                       type="date"
-                      // Don't restrict past dates for editing - allow preserving existing dates
                       value={formData.shift_start_date}
                       onChange={(e) => handleInputChange("shift_start_date", e.target.value)}
                     />
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="editShiftEndDate">Shift End Date</Label>
-                    <Input 
-                      id="editShiftEndDate" 
+                    <Input
+                      id="editShiftEndDate"
                       type="date"
                       value={formData.shift_end_date}
                       disabled
@@ -2211,73 +2269,73 @@ const Caregivers = () => {
                   </div>
                 </div>
 
-                {/* Add License Information Section for Edit Dialog - Updated */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium border-t pt-4">License Information</h3>
-                  <div className="grid gap-2">
-                    <Label htmlFor="editLicenseNumber">License Number</Label>
-                    <Input 
-                      id="editLicenseNumber" 
-                      placeholder="Enter license number"
-                      value={formData.license_number}
-                      onChange={(e) => handleInputChange("license_number", e.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="editLicensePicture">License Picture</Label>
-                    {formData.license_picture && (
-                      <div className="mb-2">
-                        <p className="text-sm text-muted-foreground mb-2">Current license:</p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => window.open(formData.license_picture, '_blank')}
-                          className="gap-2"
-                        >
-                          <FileText className="h-4 w-4" />
-                          View Current License
-                        </Button>
-                      </div>
-                    )}
-                    <FileUpload
-                      onFilesSelected={(files: File[]) => {
-                        setSelectedFiles(files)
-                        if (files && files.length > 0) {
-                          setLicenseFile(files[0])
-                        } else {
+                {!isEditingNewlyRegistered && (
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-medium border-t pt-4">License Information</h3>
+                    <div className="grid gap-2">
+                      <Label htmlFor="editLicenseNumber">License Number</Label>
+                      <Input
+                        id="editLicenseNumber"
+                        placeholder="Enter license number"
+                        value={formData.license_number}
+                        onChange={(e) => handleInputChange("license_number", e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="editLicensePicture">License Picture</Label>
+                      {formData.license_picture && (
+                        <div className="mb-2">
+                          <p className="text-sm text-muted-foreground mb-2">Current license:</p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => window.open(formData.license_picture, '_blank')}
+                            className="gap-2"
+                          >
+                            <FileText className="h-4 w-4" />
+                            View Current License
+                          </Button>
+                        </div>
+                      )}
+                      <FileUpload
+                        onFilesSelected={(files: File[]) => {
+                          setSelectedFiles(files)
+                          if (files && files.length > 0) {
+                            setLicenseFile(files[0])
+                          } else {
+                            setLicenseFile(null)
+                          }
+                        }}
+                        onFileRemove={() => {
+                          setSelectedFiles([])
                           setLicenseFile(null)
-                        }
-                      }}
-                      onFileRemove={(index: number) => {
-                        setSelectedFiles([])
-                        setLicenseFile(null)
-                      }}
-                      selectedFiles={selectedFiles}
-                      existingFiles={[]}
-                      multiple={false}
-                      accept="image/*,.pdf"
-                      maxFiles={1}
-                      disabled={updatingCaregiver}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Upload a new license file to replace the current one. Leave empty to keep existing license.
-                    </p>
-                    {licenseFile && (
-                      <div className="text-sm text-green-600">
-                        New file selected: {licenseFile.name} ({(licenseFile.size / 1024 / 1024).toFixed(2)} MB)
-                      </div>
-                    )}
+                        }}
+                        selectedFiles={selectedFiles}
+                        existingFiles={[]}
+                        multiple={false}
+                        accept="image/*,.pdf"
+                        maxFiles={1}
+                        disabled={updatingCaregiver}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Upload a new license file to replace the current one. Leave empty to keep existing license.
+                      </p>
+                      {licenseFile && (
+                        <div className="text-sm text-green-600">
+                          New file selected: {licenseFile.name} ({(licenseFile.size / 1024 / 1024).toFixed(2)} MB)
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {/* Contract Information Section */}
                 <div>
                   <h3 className="text-lg font-medium border-t pt-4">Contract Information</h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="grid gap-2">
                       <Label htmlFor="editContractStartDate">Contract Start Date</Label>
-                      <Input 
-                        id="editContractStartDate" 
+                      <Input
+                        id="editContractStartDate"
                         type="date"
                         value={formData.contract_start_date}
                         onChange={(e) => handleInputChange("contract_start_date", e.target.value)}
@@ -2285,8 +2343,8 @@ const Caregivers = () => {
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="editContractEndDate">Contract End Date</Label>
-                      <Input 
-                        id="editContractEndDate" 
+                      <Input
+                        id="editContractEndDate"
                         type="date"
                         value={formData.contract_end_date}
                         onChange={(e) => handleInputChange("contract_end_date", e.target.value)}

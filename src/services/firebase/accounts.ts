@@ -32,6 +32,40 @@ const normalizeIdentityKey = (value: unknown): string => {
   return value.trim().toLowerCase()
 }
 
+const normalizeUserRole = (value: unknown): string => {
+  const normalized = normalizeIdentityKey(value)
+  if (!normalized) {
+    return ''
+  }
+
+  if (normalized === 'user') {
+    return ''
+  }
+
+  return normalized
+}
+
+const doesUserDocMatchAccountRole = (account: Account, userData: Record<string, any>, documentId: string, canonicalUserId: string): boolean => {
+  if (documentId === canonicalUserId) {
+    return true
+  }
+
+  const targetRole = normalizeUserRole(account.role)
+  if (!targetRole) {
+    return true
+  }
+
+  const userRole = normalizeUserRole(userData.role)
+  const legacyRole = normalizeUserRole(userData.user_lvl)
+  const roleCandidates = [userRole, legacyRole].filter(Boolean)
+
+  if (roleCandidates.length === 0) {
+    return false
+  }
+
+  return roleCandidates.includes(targetRole)
+}
+
 // Helper function to update caregiver and related records after Firebase Auth creation
 const updateCaregiverRecordsWithNewId = async (
   oldDocumentId: string,
@@ -337,26 +371,38 @@ const updatePatientRecordsWithNewId = async (oldDocumentId: string, newFirebaseU
 }
 
 // Helper function to clean up duplicate user records with the same accountId
-const cleanupDuplicateUsers = async (accountId: string): Promise<void> => {
+const cleanupDuplicateUsers = async (account: Account, canonicalUserId: string): Promise<void> => {
   try {
-    console.log('🧹 Cleaning up duplicate users for accountId:', accountId)
+    console.log('🧹 Cleaning up duplicate users for accountId:', account.id)
     
     const usersRef = collection(db, 'users')
-    const q = query(usersRef, where('accountId', '==', accountId))
+    const q = query(usersRef, where('accountId', '==', account.id))
     const snapshot = await getDocs(q)
+
+    const targetDocs = snapshot.docs.filter(userDoc => {
+      const userData = userDoc.data() as Record<string, any>
+      return doesUserDocMatchAccountRole(account, userData, userDoc.id, canonicalUserId)
+    })
+
+    const ignoredDocs = snapshot.docs.filter(userDoc => !targetDocs.includes(userDoc))
+
+    ignoredDocs.forEach((ignoredDoc) => {
+      const ignoredData = ignoredDoc.data() as Record<string, any>
+      console.warn(`⚠️ Skipping cross-role user doc during duplicate cleanup: ${ignoredDoc.id} (role=${ignoredData.role || ignoredData.user_lvl || 'unknown'})`)
+    })
     
-    if (snapshot.docs.length <= 1) {
-      console.log('✅ No duplicates found for accountId:', accountId)
+    if (targetDocs.length <= 1) {
+      console.log('✅ No duplicates found for accountId:', account.id)
       return
     }
     
-    console.log(`🔍 Found ${snapshot.docs.length} user records with same accountId`)
+    console.log(`🔍 Found ${targetDocs.length} role-matched user records with same accountId`)
     
     // Find the original user record (the one with more complete data)
     let originalUserDoc = null
     let duplicateUserDocs = []
     
-    for (const userDoc of snapshot.docs) {
+    for (const userDoc of targetDocs) {
       const userData = userDoc.data()
       
       // The original user should have role-specific fields indicating it's the complete record
@@ -370,7 +416,10 @@ const cleanupDuplicateUsers = async (accountId: string): Promise<void> => {
                              userData.date_of_birth ||
                              userData.guardian_id
       
-      if (hasCompleteData) {
+      if (userDoc.id === canonicalUserId) {
+        originalUserDoc = userDoc
+        console.log(`📌 Keeping canonical user record: ${userDoc.id}`)
+      } else if (hasCompleteData) {
         originalUserDoc = userDoc
         console.log(`📌 Found original user record (${userData.role || 'unknown role'}): ${userDoc.id}`)
       } else {
@@ -407,6 +456,13 @@ const cleanupLegacyUserDocsForAccount = async (account: Account, canonicalUserId
     for (const candidateQuery of candidateQueries) {
       const snapshot = await getDocs(candidateQuery)
       snapshot.docs.forEach((userDoc) => {
+        const userData = userDoc.data() as Record<string, any>
+
+        if (!doesUserDocMatchAccountRole(account, userData, userDoc.id, canonicalUserId)) {
+          console.warn(`⚠️ Skipping cross-role legacy user doc: ${userDoc.id} (role=${userData.role || userData.user_lvl || 'unknown'})`)
+          return
+        }
+
         if (userDoc.id !== canonicalUserId) {
           documentIdsToDelete.add(userDoc.id)
         }
@@ -907,7 +963,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
     await cleanupLegacyUserDocsForAccount(account, canonicalPatientId)
     
     // Clean up any duplicate user records (keep only the original user record)
-    await cleanupDuplicateUsers(account.id)
+    await cleanupDuplicateUsers(account, canonicalPatientId)
     
     return user.uid
   } catch (error: any) {
