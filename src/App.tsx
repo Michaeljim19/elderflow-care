@@ -26,6 +26,7 @@ import Register from "./pages/Register";
 import Terms from "./pages/Terms";
 import Privacy from "./pages/Privacy";
 import Endorsements from "./pages/Endorsements";
+import AuditTrail from "./pages/AuditTrail";
 import AccountVerification from "./pages/AccountVerification";
 import NotFound from "./pages/NotFound";
 
@@ -102,6 +103,7 @@ const App = () => {
                             <Route path="/profile" element={<Profile />} />
                             <Route path="/backup-restore" element={<BackupRestore />} />
                             <Route path="/endorsements" element={<Endorsements />} />
+                            <Route path="/audit-trail" element={<AuditTrail />} />
                             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                             <Route path="*" element={<NotFound />} />
                           </Routes>

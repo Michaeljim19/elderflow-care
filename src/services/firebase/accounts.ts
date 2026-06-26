@@ -45,6 +45,21 @@ const normalizeUserRole = (value: unknown): string => {
   return normalized
 }
 
+const resolveMustChangePassword = (...sources: Array<Record<string, any> | null | undefined>): boolean => {
+  for (const source of sources) {
+    if (!source) continue
+    if (typeof source.mustChangePassword === 'boolean') return source.mustChangePassword
+    if (typeof source.must_change_password === 'boolean') return source.must_change_password
+  }
+
+  return true
+}
+
+const buildMustChangePasswordFields = (mustChangePassword = true) => ({
+  mustChangePassword,
+  must_change_password: mustChangePassword
+})
+
 const doesUserDocMatchAccountRole = (account: Account, userData: Record<string, any>, documentId: string, canonicalUserId: string): boolean => {
   if (documentId === canonicalUserId) {
     return true
@@ -304,6 +319,7 @@ const updatePatientRecordsWithNewId = async (oldDocumentId: string, newFirebaseU
       const patientDoc = patientSnapshot.docs[0]
       const patientData = patientDoc.data()
       const oldPatientId = patientData.patient_id // Store the old patient_id for updating related records
+      const mustChangePassword = resolveMustChangePassword(patientData)
       
       console.log(`📋 Found patient record: ${patientDoc.id} with patient_id: ${oldPatientId} and user_id: ${oldDocumentId}`)
       
@@ -313,6 +329,7 @@ const updatePatientRecordsWithNewId = async (oldDocumentId: string, newFirebaseU
         patient_id: canonicalPatientId,
         user_id: canonicalPatientId,
         auth_uid: newFirebaseUid,
+        ...buildMustChangePasswordFields(mustChangePassword),
         updated_at: Timestamp.now()
       })
       
@@ -668,6 +685,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
           const canonicalPatientId = normalizePatientDocumentId(user.uid)
           const legacyPatientDoc = await findExistingPatientDocForAccount(account)
           const legacyPatientData = legacyPatientDoc?.data() as Record<string, any> | undefined
+          const mustChangePassword = resolveMustChangePassword(existingUserData, legacyPatientData)
 
           await setDoc(doc(db, 'users', canonicalPatientId), {
             ...existingUserData,
@@ -676,6 +694,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
             auth_uid: user.uid,
             birthdate: legacyPatientData?.birthdate || legacyPatientData?.birthday || existingUserData.birthdate || existingUserData.birthday,
             gender: legacyPatientData?.gender || existingUserData.gender,
+            ...buildMustChangePasswordFields(mustChangePassword),
             is_active: true,
             status: 'active',
             auth_created: true,
@@ -768,6 +787,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
             role: account.role,
             contact_number: '',
             address: '',
+            ...buildMustChangePasswordFields(true),
             created_at: Timestamp.now(),
             updated_at: Timestamp.now(),
             is_active: true,
@@ -789,6 +809,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
             role: account.role,
             contact_number: '',
             address: '',
+            ...buildMustChangePasswordFields(true),
             created_at: Timestamp.now(),
             updated_at: Timestamp.now(),
             is_active: true,
@@ -800,6 +821,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
           }, { merge: true })
         } else {
           const legacyPatientData = legacyPatientDoc.data() as Record<string, any>
+          const mustChangePassword = resolveMustChangePassword(legacyPatientData)
 
           await setDoc(doc(db, 'users', canonicalPatientId), {
             ...legacyPatientData,
@@ -807,6 +829,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
             user_id: canonicalPatientId,
             auth_uid: user.uid,
             accountId: legacyPatientData.accountId || account.id,
+            ...buildMustChangePasswordFields(mustChangePassword),
             is_active: true,
             status: 'active',
             auth_created: true,
@@ -867,6 +890,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
         const canonicalPatientId = normalizePatientDocumentId(user.uid)
         const legacyPatientDoc = await findExistingPatientDocForAccount(account)
         const legacyPatientData = legacyPatientDoc?.data() as Record<string, any> | undefined
+        const mustChangePassword = resolveMustChangePassword(legacyPatientData)
         const nameParts = account.name.split(' ').filter(part => part.trim() !== '')
         const first_name = nameParts[0] || ''
         const middle_name = nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : ''
@@ -886,6 +910,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
           birthdate: legacyPatientData?.birthdate || legacyPatientData?.birthday,
           birthday: legacyPatientData?.birthdate || legacyPatientData?.birthday,
           gender: legacyPatientData?.gender,
+          ...buildMustChangePasswordFields(mustChangePassword),
           created_at: Timestamp.now(),
           updated_at: Timestamp.now(),
           is_active: true,
@@ -910,6 +935,7 @@ export const createFirebaseAuthUser = async (account: Account): Promise<string |
           birthdate: legacyPatientData?.birthdate || legacyPatientData?.birthday,
           birthday: legacyPatientData?.birthdate || legacyPatientData?.birthday,
           gender: legacyPatientData?.gender,
+          ...buildMustChangePasswordFields(mustChangePassword),
           created_at: Timestamp.now(),
           updated_at: Timestamp.now(),
           is_active: true,

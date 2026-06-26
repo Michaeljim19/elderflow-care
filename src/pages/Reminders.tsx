@@ -56,16 +56,10 @@ import {
   getReminders, 
   addReminder, 
   updateReminder, 
-  deleteReminder,
-  getActiveReminders,
-  getRemindersByUser,
-  getRemindersByCaregiver
+  deleteReminder
 } from "@/services/firebase/reminders"
 import { 
-  getReminderLogs, 
-  addReminderLog, 
-  updateReminderLog,
-  getPendingReminders,
+  getReminderLogs,
   acknowledgeReminder,
   markReminderAsMissed
 } from "@/services/firebase/reminderLogs"
@@ -299,8 +293,18 @@ const Reminders = () => {
   }
 
   const handleAcknowledgeReminder = async (reminderLog: ReminderLog) => {
+    const reminderLogDocId = reminderLog.id || reminderLog.reminder_id
+    if (!reminderLogDocId) {
+      toast({
+        title: "Error",
+        description: "Unable to find reminder log ID",
+        variant: "destructive"
+      })
+      return
+    }
+
     try {
-      await acknowledgeReminder(reminderLog.reminder_id, "System", "Acknowledged via Reminders page")
+      await acknowledgeReminder(reminderLogDocId, "System", "Acknowledged via Reminders page")
       
       // Refresh reminder logs
       const updatedLogs = await getReminderLogs()
@@ -321,8 +325,18 @@ const Reminders = () => {
   }
 
   const handleMarkAsMissed = async (reminderLog: ReminderLog) => {
+    const reminderLogDocId = reminderLog.id || reminderLog.reminder_id
+    if (!reminderLogDocId) {
+      toast({
+        title: "Error",
+        description: "Unable to find reminder log ID",
+        variant: "destructive"
+      })
+      return
+    }
+
     try {
-      await markReminderAsMissed(reminderLog.reminder_id, "Marked as missed via Reminders page")
+      await markReminderAsMissed(reminderLogDocId, "Marked as missed via Reminders page")
       
       // Refresh reminder logs
       const updatedLogs = await getReminderLogs()
@@ -390,12 +404,31 @@ const Reminders = () => {
     return times.map(time => `${time.hour.toString().padStart(2, '0')}:${time.minute.toString().padStart(2, '0')}`).join(', ')
   }
 
+  const normalizeStatus = (status?: string) => (status || '').trim().toLowerCase()
+
+  const toStatusLabel = (status?: string) => {
+    const normalized = normalizeStatus(status)
+    if (!normalized) return 'N/A'
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+  }
+
+  const extractRefId = (value: any): string => {
+    if (!value) return ''
+    if (typeof value === 'string') return value.split('/').pop() || value
+    if (typeof value === 'object') {
+      if (value.id) return value.id
+      if (value.path) return String(value.path).split('/').pop() || String(value.path)
+    }
+    const asString = String(value)
+    return asString.includes('/') ? asString.split('/').pop() || asString : asString
+  }
+
   const getUserName = (userId: any) => {
     if (!userId) return 'Unknown Patient'
 
-    const userKey = typeof userId === 'string'
-      ? userId.split('/').pop() || userId
-      : userId.id || userId.user_id || userId.uid || String(userId)
+    const userKey = typeof userId === 'object'
+      ? userId.id || userId.user_id || userId.uid || extractRefId(userId)
+      : extractRefId(userId)
 
     const user = users.find(item =>
       item.id === userKey || item.user_id === userKey || item.uid === userKey
@@ -411,9 +444,9 @@ const Reminders = () => {
   const getCaregiverName = (caregiverRef: any) => {
     if (!caregiverRef) return 'Unknown Caregiver'
 
-    const caregiverId = typeof caregiverRef === 'string'
-      ? caregiverRef.split('/').pop() || caregiverRef
-      : caregiverRef.id || caregiverRef.caregiver_id || caregiverRef.user_id || caregiverRef.uid || String(caregiverRef)
+    const caregiverId = typeof caregiverRef === 'object'
+      ? caregiverRef.id || caregiverRef.caregiver_id || caregiverRef.user_id || caregiverRef.uid || extractRefId(caregiverRef)
+      : extractRefId(caregiverRef)
 
     const caregiver = caregivers.find(item =>
       item.caregiver_id === caregiverId || item.user_id === caregiverId || item.id === caregiverId
@@ -472,6 +505,51 @@ const Reminders = () => {
     return reminder.is_active ? 'Scheduled' : 'Inactive'
   }
 
+  const getReminderFromLog = (log: ReminderLog) => {
+    const reminderId = extractRefId(log.reminderRef) || log.reminder_id
+    if (!reminderId) return null
+    return reminders.find(item => item.id === reminderId || item.reminder_id === reminderId) || null
+  }
+
+  const getReminderTitleFromLog = (log: ReminderLog) => {
+    const reminderFromLog = getReminderFromLog(log)
+    return reminderFromLog?.title || extractRefId(log.reminderRef) || log.reminder_id || 'N/A'
+  }
+
+  const getUserNameFromLog = (log: ReminderLog) => {
+    return getUserName(log.userId || log.userRef || log.patient_id || '')
+  }
+
+  const getCaregiverNameFromLog = (log: ReminderLog) => {
+    const reminderFromLog = getReminderFromLog(log)
+    return getCaregiverName(log.caregiverRef || reminderFromLog?.caregiverRef || '')
+  }
+
+  const getReminderScheduledTime = (log: ReminderLog) => {
+    return log.scheduledInstanceTime || log.scheduled_time || log.timestamp || log.completed_at || log.capture_time
+  }
+
+  const getReminderNote = (log: ReminderLog) => {
+    return log.note || log.notes || 'N/A'
+  }
+
+  const getReminderEvidenceUrl = (log: ReminderLog) => {
+    return log.media_url || log.evidence_photo_url || log.evidence_video_url || null
+  }
+
+  const getReminderEvidenceType = (log: ReminderLog): 'image' | 'video' | 'unknown' => {
+    if (log.evidence_video_url) return 'video'
+    if (log.evidence_photo_url) return 'image'
+
+    const url = getReminderEvidenceUrl(log)
+    if (!url) return 'unknown'
+
+    if (/\.(mp4|webm|mov|m4v|ogg)(\?|$)/i.test(url)) return 'video'
+    if (/\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|$)/i.test(url)) return 'image'
+
+    return 'unknown'
+  }
+
   // Filter data
   const filteredReminders = reminders.filter(reminder => {
     const matchesSearch = reminder.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -482,14 +560,18 @@ const Reminders = () => {
   })
 
   const filteredReminderLogs = reminderLogs.filter(log => {
-    const userName = getUserName(log.userId || '')
-    const caregiverName = getCaregiverName(log.caregiverRef || '')
+    const userName = getUserNameFromLog(log)
+    const caregiverName = getCaregiverNameFromLog(log)
+    const reminderTitle = getReminderTitleFromLog(log)
+    const actionText = (log.action || '').toLowerCase()
+    const notesText = (log.note || log.notes || '').toLowerCase()
     const matchesSearch = userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         caregiverName.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesStatus = filterStatus === "all" || log.status.toLowerCase() === filterStatus.toLowerCase()
-    const hasKnownUser = userName !== 'Unknown Patient'
-    const hasKnownCaregiver = caregiverName !== 'Unknown Caregiver'
-    return matchesSearch && matchesStatus && (hasKnownUser || hasKnownCaregiver)
+                         caregiverName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         reminderTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         actionText.includes(searchTerm.toLowerCase()) ||
+                         notesText.includes(searchTerm.toLowerCase())
+    const matchesStatus = filterStatus === "all" || normalizeStatus(log.status) === normalizeStatus(filterStatus)
+    return matchesSearch && matchesStatus
   })
 
   if (loading) {
@@ -555,7 +637,10 @@ const Reminders = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {reminderLogs.filter(log => log.status === 'Scheduled' || log.status === 'Sent').length}
+              {reminderLogs.filter(log => {
+                const normalized = normalizeStatus(log.status)
+                return normalized === 'scheduled' || normalized === 'sent' || normalized === 'late'
+              }).length}
             </div>
             <p className="text-xs text-muted-foreground">
               Awaiting response
@@ -570,13 +655,14 @@ const Reminders = () => {
           <CardContent>
             <div className="text-2xl font-bold">
               {reminderLogs.filter(log => {
-                const logDate = log.scheduled_time.toDate ? 
-                  log.scheduled_time.toDate() : 
-                  typeof log.scheduled_time === 'string' ? 
-                    new Date(log.scheduled_time) :
+                const reminderTime = getReminderScheduledTime(log)
+                const logDate = reminderTime && (reminderTime as any).toDate ? 
+                  (reminderTime as any).toDate() : 
+                  typeof reminderTime === 'string' ? 
+                    new Date(reminderTime) :
                     new Date()
                 const today = new Date()
-                return log.status === 'Missed' && 
+                return normalizeStatus(log.status) === 'missed' && 
                        logDate.toDateString() === today.toDateString()
               }).length}
             </div>
@@ -623,6 +709,7 @@ const Reminders = () => {
                   <SelectItem value="acknowledged">Acknowledged</SelectItem>
                   <SelectItem value="skipped">Skipped</SelectItem>
                   <SelectItem value="missed">Missed</SelectItem>
+                  <SelectItem value="late">Late</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -754,31 +841,48 @@ const Reminders = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Reminder ID</TableHead>
+                    <TableHead>Reminder</TableHead>
                     <TableHead>Patient</TableHead>
                     <TableHead>Caregiver</TableHead>
+                    <TableHead>Action</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Acknowledged By</TableHead>
+                    <TableHead>Scheduled</TableHead>
                     <TableHead>Notes</TableHead>
+                    <TableHead>Evidence</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredReminderLogs.map((log) => (
                     <TableRow key={log.id}>
-                      <TableCell>{log.reminder_id || 'N/A'}</TableCell>
-                      <TableCell>{getUserName(log.userId || '')}</TableCell>
-                      <TableCell>{getCaregiverName(log.caregiverRef || '')}</TableCell>
+                      <TableCell className="font-medium">{getReminderTitleFromLog(log)}</TableCell>
+                      <TableCell>{getUserNameFromLog(log)}</TableCell>
+                      <TableCell>{getCaregiverNameFromLog(log)}</TableCell>
+                      <TableCell>{log.action || 'N/A'}</TableCell>
                       <TableCell>
                         <Badge className={`text-xs ${getStatusColor(log.status)}`}>
-                          {log.status}
+                          {toStatusLabel(log.status)}
                         </Badge>
                       </TableCell>
-                      <TableCell>{log.acknowledged_by || 'N/A'}</TableCell>
-                      <TableCell className="max-w-xs truncate">{log.notes || 'N/A'}</TableCell>
+                      <TableCell>{formatDateTime(getReminderScheduledTime(log))}</TableCell>
+                      <TableCell className="max-w-xs truncate">{getReminderNote(log)}</TableCell>
+                      <TableCell>
+                        {getReminderEvidenceUrl(log) ? (
+                          <a
+                            href={getReminderEvidenceUrl(log) || '#'}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-blue-600 hover:text-blue-700 underline"
+                          >
+                            View
+                          </a>
+                        ) : (
+                          'N/A'
+                        )}
+                      </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          {(log.status === 'Scheduled' || log.status === 'Sent') && (
+                          {(normalizeStatus(log.status) === 'scheduled' || normalizeStatus(log.status) === 'sent') && (
                             <>
                               <Button 
                                 variant="ghost" 
@@ -922,11 +1026,12 @@ const Reminders = () => {
               </div>
               <div>
                 <Label htmlFor="edit-type">Type</Label>
-                <Select value={editForm.reminder_type} onValueChange={(value: any) => setEditForm(prev => ({ ...prev, reminder_type: value }))}>
+                <Select value={editForm.type} onValueChange={(value: "Task" | "Medication" | "Appointment" | "Custom") => setEditForm(prev => ({ ...prev, type: value }))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="Task">Task</SelectItem>
                     <SelectItem value="Medication">Medication</SelectItem>
                     <SelectItem value="Appointment">Appointment</SelectItem>
                     <SelectItem value="Custom">Custom</SelectItem>
@@ -935,10 +1040,10 @@ const Reminders = () => {
               </div>
             </div>
             
-            <div className="grid grid-cols-2 gap-4">
+            <div>
               <div>
                 <Label htmlFor="edit-patient">Patient</Label>
-                <Select value={editForm.patient_id} onValueChange={(value) => setEditForm(prev => ({ ...prev, patient_id: value }))}>
+                <Select value={editForm.userId} onValueChange={(value) => setEditForm(prev => ({ ...prev, userId: value }))}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select patient" />
                   </SelectTrigger>
@@ -951,36 +1056,12 @@ const Reminders = () => {
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label htmlFor="edit-medication">Medication</Label>
-                <Select value={editForm.medication_id} onValueChange={(value) => setEditForm(prev => ({ ...prev, medication_id: value }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select medication" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {medications.map((medication) => (
-                      <SelectItem key={medication.medication_id} value={medication.medication_id}>
-                        {medication.medication_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="edit-scheduled-time">Scheduled Time</Label>
-                <Input
-                  id="edit-scheduled-time"
-                  type="datetime-local"
-                  value={editForm.scheduled_time}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, scheduled_time: e.target.value }))}
-                />
-              </div>
-              <div>
                 <Label htmlFor="edit-frequency">Frequency</Label>
-                <Select value={editForm.frequency} onValueChange={(value: any) => setEditForm(prev => ({ ...prev, frequency: value }))}>
+                <Select value={editForm.repeat} onValueChange={(value: "Daily" | "Weekly" | "Monthly" | "Once" | "Custom") => setEditForm(prev => ({ ...prev, repeat: value }))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -1010,6 +1091,7 @@ const Reminders = () => {
               <input
                 type="checkbox"
                 id="edit-active"
+                title="Active"
                 checked={editForm.is_active}
                 onChange={(e) => setEditForm(prev => ({ ...prev, is_active: e.target.checked }))}
               />
@@ -1051,11 +1133,12 @@ const Reminders = () => {
               
               <div className="space-y-2">
                 <Label htmlFor="type">Type</Label>
-                <Select value={newReminder.reminder_type} onValueChange={(value: any) => setNewReminder(prev => ({ ...prev, reminder_type: value }))}>
+                <Select value={newReminder.type} onValueChange={(value: "Task" | "Medication" | "Appointment" | "Custom") => setNewReminder(prev => ({ ...prev, type: value }))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="Task">Task</SelectItem>
                     <SelectItem value="Medication">Medication</SelectItem>
                     <SelectItem value="Appointment">Appointment</SelectItem>
                     <SelectItem value="Custom">Custom</SelectItem>
@@ -1067,7 +1150,7 @@ const Reminders = () => {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="patient">Patient</Label>
-                <Select value={newReminder.patient_id} onValueChange={(value) => setNewReminder(prev => ({ ...prev, patient_id: value }))}>
+                <Select value={newReminder.userId} onValueChange={(value) => setNewReminder(prev => ({ ...prev, userId: value }))}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select patient" />
                   </SelectTrigger>
@@ -1080,38 +1163,12 @@ const Reminders = () => {
                   </SelectContent>
                 </Select>
               </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="medication">Medication</Label>
-                <Select value={newReminder.medication_id} onValueChange={(value) => setNewReminder(prev => ({ ...prev, medication_id: value }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select medication" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {medications.map((medication) => (
-                      <SelectItem key={medication.medication_id} value={medication.medication_id}>
-                        {medication.medication_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
             
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="scheduled_time">Scheduled Time</Label>
-                <Input
-                  id="scheduled_time"
-                  type="datetime-local"
-                  value={newReminder.scheduled_time}
-                  onChange={(e) => setNewReminder(prev => ({ ...prev, scheduled_time: e.target.value }))}
-                />
-              </div>
-              
-              <div className="space-y-2">
                 <Label htmlFor="frequency">Frequency</Label>
-                <Select value={newReminder.frequency} onValueChange={(value: any) => setNewReminder(prev => ({ ...prev, frequency: value }))}>
+                <Select value={newReminder.repeat} onValueChange={(value: "Daily" | "Weekly" | "Monthly" | "Once" | "Custom") => setNewReminder(prev => ({ ...prev, repeat: value }))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -1141,6 +1198,7 @@ const Reminders = () => {
               <input
                 type="checkbox"
                 id="is_active"
+                title="Active"
                 checked={newReminder.is_active}
                 onChange={(e) => setNewReminder(prev => ({ ...prev, is_active: e.target.checked }))}
               />
@@ -1179,24 +1237,46 @@ const Reminders = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Patient</Label>
-                  <p className="text-sm font-semibold">{getUserName(viewingReminderLog.userId || '')}</p>
+                  <p className="text-sm font-semibold">{getUserNameFromLog(viewingReminderLog)}</p>
                 </div>
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Caregiver</Label>
-                  <p className="text-sm">{getCaregiverName(viewingReminderLog.caregiverRef || '')}</p>
+                  <p className="text-sm">{getCaregiverNameFromLog(viewingReminderLog)}</p>
                 </div>
               </div>
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-sm font-medium text-muted-foreground">Reminder ID</Label>
-                  <p className="text-sm">{viewingReminderLog.reminder_id || 'N/A'}</p>
+                  <Label className="text-sm font-medium text-muted-foreground">Reminder</Label>
+                  <p className="text-sm">{getReminderTitleFromLog(viewingReminderLog)}</p>
                 </div>
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Status</Label>
                   <Badge className={getStatusColor(viewingReminderLog.status)}>
-                    {viewingReminderLog.status}
+                    {toStatusLabel(viewingReminderLog.status)}
                   </Badge>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Action</Label>
+                  <p className="text-sm">{viewingReminderLog.action || 'N/A'}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Scheduled Time</Label>
+                  <p className="text-sm">{formatDateTime(getReminderScheduledTime(viewingReminderLog))}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Completed At</Label>
+                  <p className="text-sm">{viewingReminderLog.completed_at ? formatDateTime(viewingReminderLog.completed_at) : 'N/A'}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Capture Time</Label>
+                  <p className="text-sm">{viewingReminderLog.capture_time ? formatDateTime(viewingReminderLog.capture_time) : 'N/A'}</p>
                 </div>
               </div>
 
@@ -1207,23 +1287,58 @@ const Reminders = () => {
                 </div>
               )}
 
-              {viewingReminderLog.notes && (
+              {(viewingReminderLog.note || viewingReminderLog.notes) && (
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Notes</Label>
                   <p className="text-sm mt-1 p-3 bg-muted rounded-md">
-                    {viewingReminderLog.notes}
+                    {viewingReminderLog.note || viewingReminderLog.notes}
                   </p>
+                </div>
+              )}
+
+              {getReminderEvidenceUrl(viewingReminderLog) && (
+                <div>
+                  <Label className="text-sm font-medium text-muted-foreground">Evidence</Label>
+                  <div className="mt-2 space-y-3">
+                    {getReminderEvidenceType(viewingReminderLog) === 'image' && (
+                      <img
+                        src={getReminderEvidenceUrl(viewingReminderLog) || ''}
+                        alt="Reminder evidence"
+                        className="w-full max-h-80 object-contain rounded-md border bg-muted"
+                      />
+                    )}
+
+                    {getReminderEvidenceType(viewingReminderLog) === 'video' && (
+                      <video
+                        controls
+                        className="w-full max-h-80 rounded-md border bg-black"
+                        poster={viewingReminderLog.evidence_video_thumbnail_url || undefined}
+                      >
+                        <source src={getReminderEvidenceUrl(viewingReminderLog) || ''} />
+                        Your browser does not support video playback.
+                      </video>
+                    )}
+
+                    <a
+                      href={getReminderEvidenceUrl(viewingReminderLog) || '#'}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm text-blue-600 hover:text-blue-700 underline"
+                    >
+                      Open evidence file
+                    </a>
+                  </div>
                 </div>
               )}
 
               <div className="grid grid-cols-2 gap-4 pt-4 border-t">
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Created</Label>
-                  <p className="text-sm">{viewingReminderLog.created_at ? formatDate(viewingReminderLog.created_at) : 'N/A'}</p>
+                  <p className="text-sm">{viewingReminderLog.created_at ? formatDateTime(viewingReminderLog.created_at) : 'N/A'}</p>
                 </div>
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Last Updated</Label>
-                  <p className="text-sm">{viewingReminderLog.updated_at ? formatDate(viewingReminderLog.updated_at) : 'N/A'}</p>
+                  <p className="text-sm">{viewingReminderLog.updated_at ? formatDateTime(viewingReminderLog.updated_at) : 'N/A'}</p>
                 </div>
               </div>
             </div>

@@ -591,6 +591,79 @@ export const updateCaregiver = async (caregiverId: string, updates: Partial<Fire
     }
     
     await setDoc(docRef, updatesWithTimestamp, { merge: true });
+
+    // Keep the paired users document aligned for shared caregiver fields.
+    try {
+      const { updateUser } = await import('./users');
+      const userSyncUpdates: Record<string, any> = {};
+
+      [
+        'first_name',
+        'middle_name',
+        'last_name',
+        'email',
+        'contact_number',
+        'shift_type',
+        'shift_start_date',
+        'shift_end_date',
+        'assigned_patients_count',
+        'max_patients',
+        'license_number',
+        'license_picture',
+        'contract_start_date',
+        'contract_end_date',
+        'status',
+        'temporary_schedule_reason',
+        'original_shift_type',
+        'original_shift_start_date',
+        'original_shift_end_date',
+        'auth_created',
+        'verified',
+        'emailVerified',
+        'email_verified',
+        'is_active'
+      ].forEach((key) => {
+        const value = updatesWithTimestamp[key];
+        if (value !== undefined) {
+          userSyncUpdates[key] = value;
+        }
+      });
+
+      const birthdayValue = updatesWithTimestamp.birthday ?? updatesWithTimestamp.birthdate;
+      if (birthdayValue !== undefined) {
+        userSyncUpdates.birthday = birthdayValue;
+        userSyncUpdates.birthdate = birthdayValue;
+      }
+
+      const addressSource = updates.address ?? currentCaregiverData?.address;
+      if (addressSource !== undefined) {
+        const addressFields = buildCaregiverAddressFields(addressSource);
+        userSyncUpdates.address = JSON.stringify(addressFields.address);
+        userSyncUpdates.province = addressFields.province;
+        userSyncUpdates.city = addressFields.city;
+        userSyncUpdates.city_municipality = addressFields.city_municipality;
+        userSyncUpdates.barangay = addressFields.barangay;
+        userSyncUpdates.street = addressFields.street;
+        userSyncUpdates.street_address = addressFields.street_address;
+      }
+
+      delete userSyncUpdates.role;
+      delete userSyncUpdates.caregiver_id;
+      delete userSyncUpdates.user_id;
+
+      Object.keys(userSyncUpdates).forEach((key) => {
+        if (userSyncUpdates[key] === undefined) {
+          delete userSyncUpdates[key];
+        }
+      });
+
+      if (Object.keys(userSyncUpdates).length > 0) {
+        await updateUser(caregiverId, userSyncUpdates);
+        console.log(`✅ Synced shared caregiver fields to users document for ${caregiverId}`);
+      }
+    } catch (userSyncError) {
+      console.warn(`⚠️ Failed to sync users document for caregiver ${caregiverId}:`, userSyncError);
+    }
     
     // If schedule-related fields are updated, regenerate shift records
     if (isScheduleUpdated) {

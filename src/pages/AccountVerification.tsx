@@ -444,7 +444,7 @@ const AccountVerification = () => {
                     
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-gray-600">Name:</span>
-                      <span className="font-medium">{verificationData.name}</span>
+                      <span className="font-medium text-gray-900">{verificationData.name}</span>
                     </div>
                     
                     <div className="flex items-center justify-between">
@@ -460,7 +460,7 @@ const AccountVerification = () => {
                     {verificationData.verifiedAt && (
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-gray-600">Verified:</span>
-                        <span className="font-medium text-sm">
+                        <span className="font-medium text-sm text-gray-900">
                           {new Date(verificationData.verifiedAt).toLocaleString()}
                         </span>
                       </div>

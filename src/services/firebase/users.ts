@@ -38,6 +38,11 @@ const generateTimestampEmail = (firstName: string, lastName: string): string => 
   return `${firstName.toLowerCase()}.${lastName.toLowerCase()}.${timestamp}@elderflow.care`;
 };
 
+const buildMustChangePasswordFields = (mustChangePassword = true) => ({
+  mustChangePassword,
+  must_change_password: mustChangePassword
+});
+
 let usersCache: Array<any> | null = null;
 let usersCachePromise: Promise<Array<any>> | null = null;
 
@@ -97,6 +102,10 @@ export const createUser = async (userData: {
     }
 
     if (userData.gender) coreUserData.gender = userData.gender;
+
+    if (String(userData.role || '').toLowerCase() === 'patient') {
+      Object.assign(coreUserData, buildMustChangePasswordFields(true));
+    }
 
     // Only add optional fields if they have values
     if (userData.middle_name) coreUserData.middle_name = userData.middle_name;
@@ -178,6 +187,10 @@ export const createUserWithId = async (
     }
 
     if (userData.gender) coreUserData.gender = userData.gender;
+
+    if (String(userData.role || '').toLowerCase() === 'patient') {
+      Object.assign(coreUserData, buildMustChangePasswordFields(true));
+    }
 
     // Only add optional fields if they have values
     if (userData.middle_name) coreUserData.middle_name = userData.middle_name;

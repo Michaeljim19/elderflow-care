@@ -20,13 +20,33 @@ import { ReminderLog, ReminderStatus } from '@/types';
 // Get all reminder logs
 export const getReminderLogs = async (): Promise<ReminderLog[]> => {
   try {
-    const querySnapshot = await getDocs(
-      query(collection(db, COLLECTIONS.REMINDER_LOGS), orderBy('scheduled_time', 'desc'))
-    );
-    return querySnapshot.docs.map(doc => ({
-      reminder_id: doc.id,
-      ...doc.data()
-    })) as ReminderLog[];
+    const querySnapshot = await getDocs(collection(db, COLLECTIONS.REMINDER_LOGS));
+
+    const getTimeValue = (value: any): number => {
+      if (!value) return 0;
+      if (typeof value?.toDate === 'function') return value.toDate().getTime();
+      if (value instanceof Date) return value.getTime();
+      if (typeof value === 'string') {
+        const parsed = new Date(value).getTime();
+        return Number.isNaN(parsed) ? 0 : parsed;
+      }
+      return 0;
+    };
+
+    const logs = querySnapshot.docs.map(doc => {
+      const data = doc.data() as Record<string, any>;
+      return {
+        id: doc.id,
+        reminder_id: data.reminder_id || doc.id,
+        ...data
+      };
+    }) as ReminderLog[];
+
+    return logs.sort((a, b) => {
+      const aTime = getTimeValue(a.scheduledInstanceTime) || getTimeValue(a.scheduled_time) || getTimeValue(a.completed_at) || getTimeValue(a.timestamp);
+      const bTime = getTimeValue(b.scheduledInstanceTime) || getTimeValue(b.scheduled_time) || getTimeValue(b.completed_at) || getTimeValue(b.timestamp);
+      return bTime - aTime;
+    });
   } catch (error) {
     console.error('Error fetching reminder logs:', error);
     throw error;

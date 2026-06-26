@@ -288,7 +288,7 @@ const Schedule = () => {
       currentPeriod = periods[currentPeriodIndex];
       // Look for next period after current
       const nextPeriodIndex = periods.findIndex((p, index) => 
-        index > currentPeriodIndex && p.startDate > currentPeriod!.endDate
+        index > currentPeriodIndex && p.startDate >= currentPeriod!.endDate
       );
       if (nextPeriodIndex >= 0) {
         nextPeriod = periods[nextPeriodIndex];
@@ -319,7 +319,7 @@ const Schedule = () => {
         // Re-find next period
         const currentIndex = periods.indexOf(currentPeriod);
         const nextIndex = periods.findIndex((p, index) => 
-          index > currentIndex && p.startDate > currentPeriod!.endDate
+          index > currentIndex && p.startDate >= currentPeriod!.endDate
         );
         if (nextIndex >= 0) {
           nextPeriod = periods[nextIndex];
@@ -615,22 +615,28 @@ const Schedule = () => {
     }
   };
 
-  const generateNextShiftPeriod = async (currentCaregiverId: string) => {
-    const { current } = getShiftPeriods(currentCaregiverId);
+  const generateNextShiftPeriod = async (
+    sourceCaregiverId: string,
+    targetCaregiverId?: string,
+    startDateOverride?: Date
+  ) => {
+    const { current } = getShiftPeriods(sourceCaregiverId);
     if (!current) return null;
 
+    const assignedCaregiverId = targetCaregiverId || sourceCaregiverId;
+
     // Generate 4-day shift period starting after current period ends
-    const nextPeriodStart = new Date(current.endDate);
+    const nextPeriodStart = startDateOverride ? new Date(startDateOverride) : new Date(current.endDate);
     const nextShiftType = current.type === 'Day' ? 'Night' : 'Day';
     const shiftDuration = 4; // 4 days per period
 
-    const periodKey = `${currentCaregiverId}:${nextPeriodStart.toISOString().split('T')[0]}:${nextShiftType}`;
+    const periodKey = `${sourceCaregiverId}:${assignedCaregiverId}:${nextPeriodStart.toISOString().split('T')[0]}:${nextShiftType}`;
     if (generatedPeriodKeysRef.current.has(periodKey)) {
       return null;
     }
 
     const alreadyScheduled = shifts.some(shift => {
-      if (shift.caregiver_id !== currentCaregiverId) {
+      if (shift.caregiver_id !== assignedCaregiverId) {
         return false;
       }
 
@@ -663,12 +669,12 @@ const Schedule = () => {
       }
 
       const newShift = {
-        caregiver_id: currentCaregiverId,
+        caregiver_id: assignedCaregiverId,
         shift_date: Timestamp.fromDate(shiftDate),
         shift_type: nextShiftType,
         start_time: Timestamp.fromDate(startTime),
         end_time: Timestamp.fromDate(endTime),
-        notes: `Auto-generated ${nextShiftType} shift period (${i + 1}/4) - rotation for ${getCaregiverName(currentCaregiverId)}`,
+        notes: `Auto-generated ${nextShiftType} shift period (${i + 1}/4) - rotation for ${getCaregiverName(assignedCaregiverId)}`,
         created_at: Timestamp.now(),
         updated_at: Timestamp.now()
       };
@@ -685,7 +691,7 @@ const Schedule = () => {
       generatedPeriodKeysRef.current.add(periodKey);
       
       return {
-        caregiverId: currentCaregiverId,
+        caregiverId: assignedCaregiverId,
         shiftType: nextShiftType,
         startDate: nextPeriodStart,
         endDate: new Date(nextPeriodStart.getTime() + (shiftDuration * 24 * 60 * 60 * 1000)),
@@ -708,12 +714,24 @@ const Schedule = () => {
 
       // Check each caregiver's current shift period
       for (const caregiver of caregivers) {
-        const { current, next } = getShiftPeriods(caregiver.caregiver_id);
+        const { current, next, allPeriods } = getShiftPeriods(caregiver.caregiver_id);
         const activePeriod = getCurrentActivePeriod(caregiver.caregiver_id) || current;
+        const lastPeriod = allPeriods?.[allPeriods.length - 1] || null;
+        const periodToRotateFrom = activePeriod || lastPeriod;
         
-        // Generate next period when the active period is within the configured lead time.
-        if (activePeriod && !next && isShiftPeriodAboutToEnd(caregiver.caregiver_id)) {
-          const newPeriod = await generateNextShiftPeriod(caregiver.caregiver_id);
+        const periodEndsSoon = activePeriod && isShiftPeriodAboutToEnd(caregiver.caregiver_id);
+        const periodHasEnded = !activePeriod && !!lastPeriod && lastPeriod.endDate <= new Date();
+
+        // Generate the next period when the current block is nearing its end,
+        // or when it has already ended and there is no future block yet.
+        if (periodToRotateFrom && !next && (periodEndsSoon || periodHasEnded)) {
+          const nextCaregiver = getNextCaregiverForRotation(caregiver.caregiver_id);
+          const targetCaregiverId = nextCaregiver?.caregiver_id || caregiver.caregiver_id;
+          const newPeriod = await generateNextShiftPeriod(
+            caregiver.caregiver_id,
+            targetCaregiverId,
+            periodToRotateFrom.endDate
+          );
           if (newPeriod) {
             hasGeneratedNewShifts = true;
             toast({
@@ -1094,14 +1112,14 @@ const Schedule = () => {
             <Clock className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button variant="outline" onClick={() => setIsAutoRotationDialogOpen(true)}>
+          {/* <Button variant="outline" onClick={() => setIsAutoRotationDialogOpen(true)}>
             <Clock className="h-4 w-4 mr-2" />
             Auto-Rotation Settings
-          </Button>
-          <Button>
+          </Button> */}
+          {/* <Button>
             <Plus className="h-4 w-4 mr-2" />
             Add Shift
-          </Button>
+          </Button> */}
         </div>
       </div>
 

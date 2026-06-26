@@ -145,6 +145,23 @@ const mockReports = [
   }
 ];
 
+// Helper function to format blood pressure
+const formatBloodPressure = (bp: any): string => {
+  if (!bp) return 'N/A';
+  
+  // If it's already a string (old format)
+  if (typeof bp === 'string') {
+    return bp;
+  }
+  
+  // If it's an object with systolic and diastolic
+  if (typeof bp === 'object' && bp.systolic !== undefined && bp.diastolic !== undefined) {
+    return `${bp.systolic}/${bp.diastolic}`;
+  }
+  
+  return 'N/A';
+};
+
 const PatientHandoverReports = () => {
   const [reports, setReports] = useState<HandoverReport[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -433,12 +450,12 @@ const PatientHandoverReports = () => {
             </p>
           </div>
           <Dialog open={isCreateReportOpen} onOpenChange={setIsCreateReportOpen}>
-            <DialogTrigger asChild>
+            {/* <DialogTrigger asChild>
               <Button className="gap-2 h-12 text-base">
                 <Plus className="h-5 w-5" />
                 <span className="text-base">New Handover Report</span>
               </Button>
-            </DialogTrigger>
+            </DialogTrigger> */}
             <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Create Handover Report</DialogTitle>
@@ -769,7 +786,7 @@ const PatientHandoverReports = () => {
                     </TableCell>
                     <TableCell className="text-sm">
                       <div className="space-y-1">
-                        <div><span className="text-muted-foreground">BP:</span> {report.vital_signs?.blood_pressure || 'N/A'}</div>
+                        <div><span className="text-muted-foreground">BP:</span> {formatBloodPressure(report.vital_signs?.blood_pressure)}</div>
                         <div><span className="text-muted-foreground">HR:</span> {report.vital_signs?.heart_rate || 'N/A'}</div>
                         <div><span className="text-muted-foreground">Temp:</span> {report.vital_signs?.temperature || 'N/A'}</div>
                         <div><span className="text-muted-foreground">O2:</span> {report.vital_signs?.oxygen_saturation || 'N/A'}</div>
@@ -904,7 +921,7 @@ const PatientHandoverReports = () => {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
                       <Label className="text-sm text-gray-500">Blood Pressure</Label>
-                      <p className="font-medium">{selectedReport.vital_signs?.blood_pressure || 'N/A'}</p>
+                      <p className="font-medium">{formatBloodPressure(selectedReport.vital_signs?.blood_pressure)}</p>
                     </div>
                     <div>
                       <Label className="text-sm text-gray-500">Heart Rate</Label>

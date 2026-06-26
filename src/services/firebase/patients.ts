@@ -29,6 +29,21 @@ const generateLettersOnlyId = (prefix = 'patient', length = 12) => {
   return `${prefix}${suffix}`;
 };
 
+const resolveMustChangePassword = (...sources: Array<Record<string, any> | null | undefined>): boolean => {
+  for (const source of sources) {
+    if (!source) continue;
+    if (typeof source.mustChangePassword === 'boolean') return source.mustChangePassword;
+    if (typeof source.must_change_password === 'boolean') return source.must_change_password;
+  }
+
+  return true;
+};
+
+const buildMustChangePasswordFields = (mustChangePassword = true) => ({
+  mustChangePassword,
+  must_change_password: mustChangePassword
+});
+
 // Get all patients with retry logic using User-centered approach
 export const getPatients = async (): Promise<Patient[]> => {
   const maxRetries = 3;
@@ -247,6 +262,7 @@ export const addPatientWithAuth = async (
         user_id: unifiedDocId, // Reference to user document
         birthdate: patient.birthdate,
         gender: patient.gender,
+        ...buildMustChangePasswordFields(true),
         created_at: Timestamp.now(),
         updated_at: Timestamp.now(),
         is_active: true
@@ -405,6 +421,7 @@ export const addPatient = async (patient: Omit<Patient, 'patient_id'>): Promise<
         user_id: unifiedDocId, // Reference to user document (same ID)
         birthdate: patient.birthdate,
         gender: patient.gender,
+        ...buildMustChangePasswordFields(true),
         created_at: Timestamp.now(),
         updated_at: Timestamp.now(),
         is_active: true
@@ -880,11 +897,13 @@ export const autoSyncPatientWithAuthUID = async (patientEmail: string, firebaseA
     }
     
     // Step 3: Create new patient document with Firebase Auth UID (update patient entity)
+    const mustChangePassword = resolveMustChangePassword(patientData);
     const newPatientData = {
       ...patientData,
       patient_id: canonicalPatientId,
       user_id: canonicalPatientId,
       auth_uid: firebaseAuthUID,
+      ...buildMustChangePasswordFields(mustChangePassword),
       updated_at: Timestamp.now()
     };
     
@@ -1142,6 +1161,7 @@ export const syncPatientWithFirebaseAuth = async (currentPatientId: string, fire
     
     const patientData = currentPatientSnap.data();
     console.log(`📋 Found patient data:`, patientData);
+    const mustChangePassword = resolveMustChangePassword(patientData);
     
     // Step 2: Create or update user document with Firebase Auth UID
     const { createUserWithId, getUserById } = await import('./users');
@@ -1200,6 +1220,7 @@ export const syncPatientWithFirebaseAuth = async (currentPatientId: string, fire
       patient_id: canonicalPatientId,
       user_id: canonicalPatientId,
       auth_uid: firebaseAuthUid,
+      ...buildMustChangePasswordFields(mustChangePassword),
       updated_at: Timestamp.now()
     };
     
@@ -1305,6 +1326,7 @@ export const updatePatientToUnifiedId = async (oldPatientId: string, newUserId: 
     
     const patientData = oldPatientSnap.data();
     console.log(`📋 Found patient data for ${oldPatientId}`);
+    const mustChangePassword = resolveMustChangePassword(patientData);
     
     // Step 2: Create new patient document with unified ID
     const newPatientData = {
@@ -1312,6 +1334,7 @@ export const updatePatientToUnifiedId = async (oldPatientId: string, newUserId: 
       patient_id: canonicalPatientId,
       user_id: canonicalPatientId,
       auth_uid: newUserId,
+      ...buildMustChangePasswordFields(mustChangePassword),
       updated_at: Timestamp.now()
     };
     

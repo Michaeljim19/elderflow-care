@@ -12,7 +12,8 @@ import {
   User,
   Settings,
   Database,
-  Bell
+  Bell,
+  ClipboardList
 } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
@@ -100,16 +101,22 @@ const navigationItemsAfterManagement = [
     description: "User Account Creation"
   },
   { 
-    title: "Backup & Restore", 
-    url: "/backup-restore", 
-    icon: Database,
-    description: "Data Backup & Recovery"
-  },
-  { 
     title: "Handover Reports", 
     url: "/endorsements", 
     icon: FileText,
     description: "Shift Reports & Care Handovers"
+  },
+  { 
+    title: "Audit Trail", 
+    url: "/audit-trail", 
+    icon: ClipboardList,
+    description: "CARE App Activity Feed"
+  }, 
+  { 
+    title: "Backup & Restore", 
+    url: "/backup-restore", 
+    icon: Database,
+    description: "Data Backup & Recovery"
   },
 ]
 

@@ -1741,12 +1741,7 @@ const Caregivers = () => {
             )}
           </Button>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" />
-                Add Eldercare
-              </Button>
-            </DialogTrigger>
+            
             <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Add New Eldercare</DialogTitle>

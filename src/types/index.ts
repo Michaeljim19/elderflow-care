@@ -19,6 +19,8 @@ export interface User {
   updated_at: Timestamp;
   is_active: boolean;
   auth_created?: boolean;
+  mustChangePassword?: boolean;
+  must_change_password?: boolean;
 }
 
 // 2. Patient - Extends User (with temporary compatibility fields)
@@ -26,6 +28,8 @@ export interface Patient {
   id: string; // Document ID
   patient_id: string; // Same as user_id (FK → User.user_id)
   user_id?: string; // Reference to User.user_id for linking
+  mustChangePassword?: boolean;
+  must_change_password?: boolean;
   
   // Core patient fields
   birthdate: string;
@@ -60,6 +64,7 @@ export interface Patient {
 // 3. Caregiver - Extends User (with temporary compatibility fields)
 export interface Caregiver {
   caregiver_id: string; // Same as user_id (FK → User.user_id)
+  id?: string; // Optional Firestore document id for compatibility
   user_id?: string; // Reference to User.user_id
   shift_type: 'Day' | 'Night';
   
@@ -203,18 +208,30 @@ export interface NotificationTime {
 // 8. Reminder_Log
 export interface ReminderLog {
   id: string; // Document ID
-  reminder_id: string;
-  userId?: string; // User ID field
-  caregiverRef?: string; // Caregiver reference field
-  medication_id: string; // FK → Medication.medication_id
-  patient_id: string; // FK → Patient.patient_id
-  scheduled_time: Timestamp;
-  status: 'Scheduled' | 'Sent' | 'Acknowledged' | 'Skipped' | 'Missed';
-  timestamp: Timestamp;
+  reminder_id?: string;
+  userId?: string; // Legacy user ID field
+  userRef?: string | { id?: string; path?: string }; // Firestore reference to /users
+  caregiverRef?: string | { id?: string; path?: string }; // Firestore reference to /caregivers or /users
+  reminderRef?: string | { id?: string; path?: string }; // Firestore reference to /reminders
+  medication_id?: string; // FK → Medication.medication_id
+  patient_id?: string; // FK → Patient.patient_id
+  scheduled_time?: Timestamp | string;
+  scheduledInstanceTime?: Timestamp | string;
+  status: string;
+  action?: string;
+  capture_time?: Timestamp | string;
+  completed_at?: Timestamp | string;
+  timestamp?: Timestamp;
   acknowledged_by?: string;
+  note?: string;
   notes?: string;
-  created_at?: string;
-  updated_at?: string;
+  media_url?: string | null;
+  evidence_photo_url?: string | null;
+  evidence_video_url?: string | null;
+  evidence_video_thumbnail_url?: string | null;
+  evidence_video_duration?: number | null;
+  created_at?: Timestamp | string;
+  updated_at?: Timestamp | string;
 }
 
 // Reminder status type

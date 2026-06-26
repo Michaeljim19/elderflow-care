@@ -1438,7 +1438,7 @@ const Account = () => {
                 <h3 className="text-xl font-semibold">Generated Login Credentials Preview</h3>
                 <div className="bg-gray-50 rounded-lg p-4 space-y-3">
                   <div className="space-y-2">
-                    <Label className="text-base font-medium">Generated Login Email</Label>
+                    <Label className="text-base font-medium text-slate-900">Generated Login Email</Label>
                     <Input
                       value={formData.generated_email}
                       readOnly
@@ -1446,7 +1446,7 @@ const Account = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-base font-medium">Generated Password</Label>
+                    <Label className="text-base font-medium text-slate-900">Generated Password</Label>
                     <Input
                       value={formData.generated_password}
                       readOnly
